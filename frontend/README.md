@@ -1,16 +1,73 @@
-# React + Vite
+# MindBridge — Student Support & Case Coordination
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+MindBridge is a privacy-first student support and case coordination system designed to help students raise concerns and track their progress.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Submit concerns related to ragging and bullying, emotional support, academics, hostel issues, and financial assistance.
+- Choose an identity-sharing preference when submitting a concern.
+- View submitted cases and their current statuses.
+- Access notifications and case details.
+- Manage privacy preferences.
+- Responsive interface with student-focused navigation.
 
-## React Compiler
+## Tech Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- React
+- Vite
+- React Router
+- Lucide React
+- CSS
 
-## Expanding the ESLint configuration
+## Getting Started
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+### Prerequisites
+
+Install [Node.js](https://nodejs.org/) and npm.
+
+### Installation
+
+From the `frontend` directory, run:
+
+```bash
+npm install
+npm run dev
+```
+
+Open the local URL displayed in the terminal, usually `http://localhost:5173/`.
+
+### Production Build
+
+To verify the production build, run:
+
+```bash
+npm run build
+```
+
+## Current Development Status
+
+The frontend currently uses mock data and browser storage for demonstration. Case submissions, notification read status, and identity preferences are not yet connected to a live backend or shared database.
+
+Backend API integration, server-side authentication, persistent storage, and role-based authorization remain dependent on the backend implementation.
+
+**Privacy note:** The current frontend is a development prototype, not a production-ready system for real or sensitive student reports. Browser storage is not a secure substitute for backend access controls.
+
+## Project Structure
+
+```text
+frontend/
+├── public/
+├── src/
+│   ├── components/
+│   ├── pages/
+│   ├── services/
+│   ├── App.jsx
+│   ├── App.css
+│   └── index.css
+├── package.json
+└── README.md
+```
+
+## Team Workflow
+
+Coordinate backend API endpoints, request/response formats, authentication, and case data models with the team before integrating the frontend with the backend.
