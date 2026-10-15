@@ -18,7 +18,7 @@ import {
     saveIdentityPreference,
 } from "../services/privacyService";
 
-import { saveCase } from "../services/mockCaseService";
+import { createCase } from "../services/caseService";
 
 const categories = [
     { value: 'academic_support', label: 'Academic support' },
@@ -143,38 +143,32 @@ export default function SubmitCase() {
         return Object.keys(nextErrors).length === 0;
     }
 
-    function handleSubmit(event) {
-        event.preventDefault();
 
-        if (!validateForm()) {
-            return;
-        }
+async function handleSubmit(event) {
+    event.preventDefault();
 
-        // Temporary frontend demo only.
-        // The real API submission will be added after the backend contract is agreed.
-        try {
-            saveCase({
-                title: form.title.trim(),
-                category: form.category,
-                description: form.description.trim(),
-                identityMode: form.identityMode,
-                incidentDate: form.incidentDate,
-                incidentLocation: form.incidentLocation.trim(),
-                peopleInvolved: form.peopleInvolved.trim(),
-            });
+    if (!validateForm()) {
+        return;
+    }
 
-            setSubmitted(true);
+    try {
+        setErrors((current) => ({ ...current, form: '' }));
 
-        } catch (error) {
-            setErrors((current) => ({
-                ...current,
-                form: error.message || "Something went wrong. Please try again.",
-            }));
-            return;
-        }
+        await createCase({
+            title: form.title.trim(),
+            category: form.category,
+            description: form.description.trim(),
+        });
 
         setSubmitted(true);
+    } catch (error) {
+        setErrors((current) => ({
+            ...current,
+            form: error.message || 'Could not submit your concern. Please try again.',
+        }));
     }
+}
+
 
     if (submitted) {
         return (
@@ -183,11 +177,11 @@ export default function SubmitCase() {
                     <div className="success-icon">
                         <Check size={29} />
                     </div>
-                    <span className="section-overline">DEMO CONFIRMATION</span>
+                    <span className="section-overline">SUBMISSION CONFIRMED</span>
                     <h1>Your concern is ready for its <em>next step.</em></h1>
                     <p>
-                        The form passed frontend validation. It has not been sent to
-                        a server yet, so no real case has been created.
+                    Your concern has been submitted successfully. You can return
+                    to your dashboard to continue.
                     </p>
                     <div className="success-summary">
                         <span>Concern title</span>
@@ -549,7 +543,7 @@ export default function SubmitCase() {
 
                     <div className="sidebar-confidentiality">
                         <ShieldCheck size={17} />
-                        <span>Prototype form · Nothing is sent to a server yet.</span>
+                        <span>Your information is sent securely to the server.</span>
                     </div>
                 </aside>
             </div>

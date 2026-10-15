@@ -37,3 +37,6 @@ venv/
 
 # OS files
 Thumbs.db
+
+# Temporary local backup files
+frontend/stash-changes.txt

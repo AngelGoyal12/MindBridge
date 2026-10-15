@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -13,148 +13,152 @@ import {
   CircleCheck,
 } from 'lucide-react';
 
-import { getCases } from "../services/mockCaseService";
+import { getCaseById } from "../services/caseService";
 
 // Temporary demo data. Later, Person 2's API will provide case records.
-const demoCases = [
-  {
-    id: 'MB-1024',
-    title: 'Hostel maintenance concern',
-    category: 'Hostel & accommodation',
-    categoryValue: 'hostel_issue',
-    date: '2026-10-12',
-    status: 'In progress',
-    statusValue: 'in_progress',
-    description:
-      'A maintenance concern submitted for review by the relevant support team.',
-    identityMode: 'restricted',
-    updates: [
-      {
-        date: '12 Oct 2026',
-        title: 'Concern submitted',
-        description: 'Your concern was recorded in the demo.',
-        type: 'complete',
-      },
-      {
-        date: '13 Oct 2026',
-        title: 'Review started',
-        description: 'The relevant team has started reviewing the concern.',
-        type: 'complete',
-      },
-      {
-        date: '14 Oct 2026',
-        title: 'Follow-up in progress',
-        description: 'The concern is being handled by the relevant team.',
-        type: 'current',
-      },
-    ],
-  },
-  {
-    id: 'MB-1018',
-    title: 'Academic guidance request',
-    category: 'Academic support',
-    categoryValue: 'academic_support',
-    date: '2026-10-08',
-    status: 'Under review',
-    statusValue: 'under_review',
-    description:
-      'A request for academic guidance and help identifying next steps.',
-    identityMode: 'identified',
-    updates: [
-      {
-        date: '08 Oct 2026',
-        title: 'Concern submitted',
-        description: 'Your concern was recorded in the demo.',
-        type: 'complete',
-      },
-      {
-        date: '10 Oct 2026',
-        title: 'Under review',
-        description: 'A coordinator is reviewing the request.',
-        type: 'current',
-      },
-    ],
-  },
-  {
-    id: 'MB-1009',
-    title: 'Fee assistance enquiry',
-    category: 'Financial assistance',
-    categoryValue: 'financial_assistance',
-    date: '2026-10-02',
-    status: 'Resolved',
-    statusValue: 'resolved',
-    description:
-      'An enquiry about available financial assistance options.',
-    identityMode: 'restricted',
-    updates: [
-      {
-        date: '02 Oct 2026',
-        title: 'Concern submitted',
-        description: 'Your concern was recorded in the demo.',
-        type: 'complete',
-      },
-      {
-        date: '03 Oct 2026',
-        title: 'Request reviewed',
-        description: 'The request was reviewed in this demo.',
-        type: 'complete',
-      },
-      {
-        date: '04 Oct 2026',
-        title: 'Marked as resolved',
-        description: 'The demo case was marked as resolved.',
-        type: 'complete',
-      },
-    ],
-  },
-  {
-    id: 'MB-1003',
-    title: 'Request for student support',
-    category: 'Other support',
-    categoryValue: 'other',
-    date: '2026-09-27',
-    status: 'Awaiting review',
-    statusValue: 'awaiting_review',
-    description:
-      'A general support request awaiting an initial review.',
-    identityMode: 'anonymous',
-    updates: [
-      {
-        date: '27 Sep 2026',
-        title: 'Concern submitted',
-        description: 'Your concern was recorded in the demo.',
-        type: 'complete',
-      },
-      {
-        date: 'Awaiting update',
-        title: 'Waiting for initial review',
-        description: 'No review update has been recorded in this demo yet.',
-        type: 'current',
-      },
-    ],
-  },
-];
+// const demoCases = [
+//   {
+//     id: 'MB-1024',
+//     title: 'Hostel maintenance concern',
+//     category: 'Hostel & accommodation',
+//     categoryValue: 'hostel_issue',
+//     date: '2026-10-12',
+//     status: 'In progress',
+//     statusValue: 'in_progress',
+//     description:
+//       'A maintenance concern submitted for review by the relevant support team.',
+//     identityMode: 'restricted',
+//     updates: [
+//       {
+//         date: '12 Oct 2026',
+//         title: 'Concern submitted',
+//         description: 'Your concern was recorded in the demo.',
+//         type: 'complete',
+//       },
+//       {
+//         date: '13 Oct 2026',
+//         title: 'Review started',
+//         description: 'The relevant team has started reviewing the concern.',
+//         type: 'complete',
+//       },
+//       {
+//         date: '14 Oct 2026',
+//         title: 'Follow-up in progress',
+//         description: 'The concern is being handled by the relevant team.',
+//         type: 'current',
+//       },
+//     ],
+//   },
+//   {
+//     id: 'MB-1018',
+//     title: 'Academic guidance request',
+//     category: 'Academic support',
+//     categoryValue: 'academic_support',
+//     date: '2026-10-08',
+//     status: 'Under review',
+//     statusValue: 'under_review',
+//     description:
+//       'A request for academic guidance and help identifying next steps.',
+//     identityMode: 'identified',
+//     updates: [
+//       {
+//         date: '08 Oct 2026',
+//         title: 'Concern submitted',
+//         description: 'Your concern was recorded in the demo.',
+//         type: 'complete',
+//       },
+//       {
+//         date: '10 Oct 2026',
+//         title: 'Under review',
+//         description: 'A coordinator is reviewing the request.',
+//         type: 'current',
+//       },
+//     ],
+//   },
+//   {
+//     id: 'MB-1009',
+//     title: 'Fee assistance enquiry',
+//     category: 'Financial assistance',
+//     categoryValue: 'financial_assistance',
+//     date: '2026-10-02',
+//     status: 'Resolved',
+//     statusValue: 'resolved',
+//     description:
+//       'An enquiry about available financial assistance options.',
+//     identityMode: 'restricted',
+//     updates: [
+//       {
+//         date: '02 Oct 2026',
+//         title: 'Concern submitted',
+//         description: 'Your concern was recorded in the demo.',
+//         type: 'complete',
+//       },
+//       {
+//         date: '03 Oct 2026',
+//         title: 'Request reviewed',
+//         description: 'The request was reviewed in this demo.',
+//         type: 'complete',
+//       },
+//       {
+//         date: '04 Oct 2026',
+//         title: 'Marked as resolved',
+//         description: 'The demo case was marked as resolved.',
+//         type: 'complete',
+//       },
+//     ],
+//   },
+//   {
+//     id: 'MB-1003',
+//     title: 'Request for student support',
+//     category: 'Other support',
+//     categoryValue: 'other',
+//     date: '2026-09-27',
+//     status: 'Awaiting review',
+//     statusValue: 'awaiting_review',
+//     description:
+//       'A general support request awaiting an initial review.',
+//     identityMode: 'anonymous',
+//     updates: [
+//       {
+//         date: '27 Sep 2026',
+//         title: 'Concern submitted',
+//         description: 'Your concern was recorded in the demo.',
+//         type: 'complete',
+//       },
+//       {
+//         date: 'Awaiting update',
+//         title: 'Waiting for initial review',
+//         description: 'No review update has been recorded in this demo yet.',
+//         type: 'current',
+//       },
+//     ],
+//   },
+// ];
 
 function formatStoredCase(item) {
+
   const categoryLabels = {
     ragging_bullying: 'Ragging & bullying',
     emotional_support: 'Emotional support',
     academic_support: 'Academic support',
+    academic: 'Academic',
     hostel_issue: 'Hostel & accommodation',
     financial_assistance: 'Financial assistance',
     other: 'Other support',
   };
 
   const statusLabels = {
-    awaiting_review: 'Awaiting review',
-    under_review: 'Under review',
+    submitted: 'Submitted',
+    in_review: 'Under review',
     in_progress: 'In progress',
     resolved: 'Resolved',
     closed: 'Closed',
   };
 
-  const date = item.createdAt
-    ? item.createdAt.slice(0, 10)
+  const createdAt = item.created_at ?? item.createdAt;
+
+  const date = createdAt
+    ? createdAt.slice(0, 10)
     : item.date ?? '';
 
   return {
@@ -164,22 +168,24 @@ function formatStoredCase(item) {
       item.categoryLabel ??
       item.category ??
       'Other support',
-    categoryValue: item.categoryValue ?? item.category,
-    statusValue: item.statusValue ?? item.status ?? 'awaiting_review',
-    status:
-      statusLabels[item.status] ??
-      item.statusLabel ??
-      item.status ??
-      'Awaiting review',
-    date,
+
+  categoryValue: item.categoryValue ?? item.category,
+  statusValue: item.statusValue ?? item.status ?? 'submitted',
+  status:
+    statusLabels[item.status] ??
+    item.statusLabel ??
+    item.status ??
+    'Submitted',
+  date,
+
     updates: item.updates ?? [
-      {
-        date: date || 'Date unavailable',
-        title: 'Concern submitted',
-        description: 'Your concern was recorded in this browser demo.',
-        type: 'complete',
-      },
-    ],
+  {
+    date: date || 'Date unavailable',
+    title: 'Concern submitted',
+    description: 'Your concern has been saved.',
+    type: 'complete',
+  },
+],
   };
 }
 
@@ -223,29 +229,59 @@ function StatusBadge({ status, statusValue }) {
   );
 }
 
+
 export default function CaseDetails() {
   const { caseId } = useParams();
   const location = useLocation();
 
-  // Navigation state lets MyCases pass the selected record to this page.
-  // The fallback lets the URL work when opened or refreshed directly.
-  const caseItem = useMemo(() => {
-    const storedCase = getCases()
-      .map(formatStoredCase)
-      .find((item) => item.id === caseId);
+  const [caseItem, setCaseItem] = useState(
+    location.state?.caseData
+      ? formatStoredCase(location.state.caseData)
+      : null
+  );
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-    if (storedCase) {
-      return storedCase;
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCase() {
+      try {
+        setLoading(true);
+        setError('');
+
+        const data = await getCaseById(caseId);
+
+        if (!cancelled) {
+          setCaseItem(formatStoredCase(data));
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setCaseItem(null);
+          setError(err.message || 'Could not load this case.');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
     }
 
-    const passedCase = location.state?.caseData;
+    loadCase();
 
-    if (passedCase?.id === caseId) {
-      return formatStoredCase(passedCase);
-    }
+    return () => {
+      cancelled = true;
+    };
+  }, [caseId]);
 
-    return demoCases.find((item) => item.id === caseId);
-  }, [caseId, location.state]);
+  if (loading) {
+  return (
+    <main className="case-details-page page-container">
+      <p role="status">Loading case details...</p>
+    </main>
+  );
+}
+
 
   if (!caseItem) {
     return (
@@ -262,9 +298,8 @@ export default function CaseDetails() {
           <span className="section-overline">CASE NOT FOUND</span>
           <h1>We couldn't find that <em>case.</em></h1>
           <p>
-            This reference may not exist in the current demo, or the case
-            may not be available to your account.
-          </p>
+  {error || "This case could not be found or may not be available."}
+</p>
           <Link to="/cases" className="button-primary">
             Return to My Cases <ArrowUpRight size={16} />
           </Link>
@@ -287,10 +322,12 @@ export default function CaseDetails() {
       title: 'Initial review',
       description: 'A coordinator checks the information and next steps.',
       completed: [
-        'under_review',
-        'in_progress',
-        'resolved',
-      ].includes(caseItem.statusValue),
+  'in_review',
+  'under_review',
+  'in_progress',
+  'resolved',
+  'closed',
+].includes(caseItem.statusValue),
     },
     {
       title: 'Action and follow-up',
@@ -300,7 +337,7 @@ export default function CaseDetails() {
     {
       title: 'Resolution',
       description: 'The case is marked resolved after follow-up.',
-      completed: caseItem.statusValue === 'resolved',
+      completed: ['resolved', 'closed'].includes(caseItem.statusValue),
     },
   ];
 
@@ -388,11 +425,10 @@ export default function CaseDetails() {
             </div>
 
             <p className="demo-disclaimer">
-              <CircleHelp size={15} />
-              Progress steps are illustrative demo stages. In the connected
-              version, the backend's actual case status and updates will be
-              the source of truth.
-            </p>
+  <CircleHelp size={15} />
+  The current case status comes from the backend. Historical
+  status changes are not available yet.
+</p>
           </section>
 
           <section className="detail-panel">

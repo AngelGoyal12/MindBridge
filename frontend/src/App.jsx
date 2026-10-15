@@ -1,5 +1,5 @@
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   BrowserRouter,
   NavLink,
@@ -20,14 +20,12 @@ import './App.css';
 import SubmitCase from './pages/SubmitCase.jsx';
 import MyCases from './pages/MyCases.jsx';
 import CaseDetails from './pages/CaseDetails.jsx';
-import Notifications from "./pages/Notifications.jsx";
-import PrivacyPreferences from "./pages/PrivacyPreferences.jsx";
-import { getCases } from "./services/mockCaseService";
-
-import PlaceholderPage from "./components/PlaceholderPage.jsx";
+import Notifications from './pages/Notifications.jsx';
+import PrivacyPreferences from './pages/PrivacyPreferences.jsx';
+import { getMyCases } from './services/caseService';
+import PlaceholderPage from './components/PlaceholderPage.jsx';
 
 function Navbar() {
-
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -45,6 +43,7 @@ function Navbar() {
       });
     }
   };
+
   return (
     <header className="site-header">
       <nav className="navbar page-container" aria-label="Main navigation">
@@ -54,13 +53,22 @@ function Navbar() {
             <span className="monogram-b">b</span>
           </span>
           <span className="brand-lockup">
-            <span className="brand-name">mindbridge<span>.</span></span>
-            <span className="brand-descriptor">STUDENT SUPPORT, REIMAGINED</span>
+            <span className="brand-name">
+              mindbridge<span>.</span>
+            </span>
+            <span className="brand-descriptor">
+              STUDENT SUPPORT, REIMAGINED
+            </span>
           </span>
         </NavLink>
 
         <div className="nav-links">
-          <NavLink to="/" end className="nav-link" onClick={handleHomeClick}>
+          <NavLink
+            to="/"
+            end
+            className="nav-link"
+            onClick={handleHomeClick}
+          >
             <span className="nav-index">01</span> Home
           </NavLink>
           <a href="/#how-it-works" className="nav-link">
@@ -97,6 +105,7 @@ function Navbar() {
           onClick={(event) => {
             const links = document.querySelector('.nav-links');
             const isOpen = links?.classList.toggle('nav-links-open');
+
             event.currentTarget.setAttribute(
               'aria-expanded',
               String(Boolean(isOpen))
@@ -115,7 +124,9 @@ function Reveal({ children, className = '' }) {
     const elements = document.querySelectorAll('.reveal');
 
     if (!('IntersectionObserver' in window)) {
-      elements.forEach((element) => element.classList.add('is-visible'));
+      elements.forEach((element) =>
+        element.classList.add('is-visible')
+      );
       return;
     }
 
@@ -175,11 +186,16 @@ function Home() {
 
             <div className="hero-note">
               <ShieldCheck size={18} />
-              <span>Your concern deserves thoughtful human review.</span>
+              <span>
+                Your concern deserves thoughtful human review.
+              </span>
             </div>
           </div>
 
-          <div className="hero-art" aria-label="Illustration of a supportive connection">
+          <div
+            className="hero-art"
+            aria-label="Illustration of a supportive connection"
+          >
             <div className="art-orbit orbit-one" />
             <div className="art-orbit orbit-two" />
 
@@ -226,7 +242,10 @@ function Home() {
           </div>
         </section>
 
-        <section className="how-section page-container" id="how-it-works">
+        <section
+          className="how-section page-container"
+          id="how-it-works"
+        >
           <Reveal>
             <div className="section-heading">
               <div>
@@ -273,11 +292,16 @@ function Home() {
           </div>
         </section>
 
-        <section className="home-privacy-section page-container" id="privacy">
+        <section
+          className="home-privacy-section page-container"
+          id="privacy"
+        >
           <Reveal>
             <div className="section-heading">
               <div>
-                <div className="eyebrow">Your privacy, your choices</div>
+                <div className="eyebrow">
+                  Your privacy, your choices
+                </div>
                 <h2>Support should feel safe.</h2>
               </div>
               <p>
@@ -322,20 +346,22 @@ function Home() {
         <section className="closing-section page-container">
           <Reveal className="closing-panel">
             <div>
-              <span className="closing-kicker">Whenever you're ready</span>
+              <span className="closing-kicker">
+                Whenever you're ready
+              </span>
               <h2>A small first step is still a first step.</h2>
               <p>
                 Start a concern or explore how the student portal works.
                 You can take things one step at a time.
               </p>
             </div>
+
             <NavLink to="/dashboard" className="button-light">
               Enter MindBridge <ArrowUpRight size={18} />
             </NavLink>
           </Reveal>
         </section>
       </main>
-
 
       <footer className="site-footer">
         <div className="footer-main page-container">
@@ -344,11 +370,13 @@ function Home() {
               <span className="footer-spark">✳</span>
               A note to take with you
             </span>
+
             <h2>
               Asking for support
               <br />
               is a form of <em>strength.</em>
             </h2>
+
             <p>
               You don't need the perfect words.
               You just need a place to begin.
@@ -370,92 +398,147 @@ function Home() {
               Explore the student portal <ArrowUpRight size={16} />
             </NavLink>
 
-
             <div className="footer-page-links">
-              <NavLink to="/help">Help & Support</NavLink>
+              <NavLink to="/help">Help &amp; Support</NavLink>
               <NavLink to="/about">About</NavLink>
               <NavLink to="/departments">Departments</NavLink>
               <NavLink to="/accessibility">Accessibility</NavLink>
             </div>
-
           </div>
         </div>
 
         <div className="footer-bottom page-container">
-          <span>MINDBRIDGE <span className="footer-separator">/</span> STUDENT SUPPORT CONCEPT</span>
-          <a href="/#privacy">Privacy is part of the design <span>↗</span></a>
+          <span>
+            MINDBRIDGE <span className="footer-separator">/</span>{' '}
+            STUDENT SUPPORT CONCEPT
+          </span>
+          <a href="/#privacy">
+            Privacy is part of the design <span>↗</span>
+          </a>
           <span>Built with care, one step at a time.</span>
         </div>
       </footer>
-
     </>
   );
 }
 
-
 function DashboardPlaceholder() {
+  const [cases, setCases] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCases() {
+      try {
+        setLoading(true);
+        setError('');
+
+        const data = await getMyCases();
+
+        if (!cancelled) {
+          setCases(data);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err.message || 'Could not load cases.');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadCases();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const statusLabels = {
-    awaiting_review: "Awaiting review",
-    under_review: "Under review",
-    in_progress: "In progress",
-    resolved: "Resolved",
-    closed: "Closed",
+    submitted: 'Submitted',
+    in_review: 'Under review',
+    in_progress: 'In progress',
+    resolved: 'Resolved',
+    closed: 'Closed',
   };
 
   const categoryLabels = {
-    ragging_bullying: "Ragging & bullying",
-    emotional_support: "Emotional support",
-    academic_support: "Academic support",
-    hostel_issue: "Hostel & accommodation",
-    financial_assistance: "Financial assistance",
-    other: "Other support",
+    ragging_bullying: 'Ragging & bullying',
+    emotional_support: 'Emotional support',
+    academic_support: 'Academic support',
+    hostel_issue: 'Hostel & accommodation',
+    financial_assistance: 'Financial assistance',
+    other: 'Other support',
+    academic: 'Academic',
   };
 
-  const cases = getCases()
+  const displayCases = cases
     .map((item) => {
-      const status = item.status ?? "awaiting_review";
+      const status = item.status ?? 'submitted';
+      const dateValue =
+        item.created_at ?? item.createdAt ?? item.date;
 
       return {
         ...item,
         status,
         statusLabel: statusLabels[status] ?? status,
-        categoryLabel: categoryLabels[item.category] ?? item.category,
-        date: item.createdAt
-          ? new Date(item.createdAt).toLocaleDateString("en-IN", {
-            day: "2-digit",
-            month: "short",
-            year: "numeric",
-          })
-          : item.date ?? "",
-        statusClass: status.replaceAll("_", "-"),
+        categoryLabel:
+          categoryLabels[item.category] ?? item.category,
+        date: dateValue
+          ? new Date(dateValue).toLocaleDateString('en-IN', {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+            })
+          : 'Date unavailable',
         progress:
-          status === "resolved" || status === "closed"
+          status === 'resolved' || status === 'closed'
             ? 100
-            : status === "in_progress"
+            : status === 'in_progress'
               ? 66
-              : status === "under_review"
+              : status === 'in_review'
                 ? 33
                 : 0,
       };
     })
     .sort((a, b) => {
-      const dateA = new Date(a.createdAt ?? a.date).getTime();
-      const dateB = new Date(b.createdAt ?? b.date).getTime();
+      const dateA = new Date(
+        a.created_at ?? a.createdAt ?? a.date
+      ).getTime();
+
+      const dateB = new Date(
+        b.created_at ?? b.createdAt ?? b.date
+      ).getTime();
+
       return dateB - dateA;
     });
 
-  const totalCases = cases.length;
+  const totalCases = displayCases.length;
 
-  const inProgressCount = cases.filter(
-    (item) => item.status === "in_progress"
+  const inProgressCount = displayCases.filter(
+    (item) => item.status === 'in_progress'
   ).length;
 
-  const awaitingReviewCount = cases.filter(
-    (item) => item.status === "awaiting_review"
+  const awaitingReviewCount = displayCases.filter(
+    (item) => ['submitted', 'in_review'].includes(item.status)
   ).length;
 
   return (
     <main className="dashboard page-container">
+      {loading && (
+        <p role="status">Loading your dashboard...</p>
+      )}
+
+      {error && (
+        <p role="alert">
+          Could not load dashboard cases: {error}
+        </p>
+      )}
+
       <section className="dashboard-welcome">
         <div className="dashboard-welcome-copy">
           <div className="eyebrow">
@@ -477,7 +560,11 @@ function DashboardPlaceholder() {
 
         <div className="welcome-side-note">
           <span className="welcome-note-symbol">✳</span>
-          <span>There's no perfect way<br />to ask for support.</span>
+          <span>
+            There's no perfect way
+            <br />
+            to ask for support.
+          </span>
         </div>
       </section>
 
@@ -499,7 +586,9 @@ function DashboardPlaceholder() {
             <span className="section-overline">YOUR OVERVIEW</span>
             <h2>Where things stand.</h2>
           </div>
-          <span className="overview-caption">A quick look at your cases</span>
+          <span className="overview-caption">
+            A quick look at your cases
+          </span>
         </div>
 
         <div className="overview-grid">
@@ -507,33 +596,45 @@ function DashboardPlaceholder() {
             <span className="overview-label">Total cases</span>
             <div className="overview-value-row">
               <span className="overview-number">
-                {String(totalCases).padStart(2, "0")}
+                {String(totalCases).padStart(2, '0')}
               </span>
-              <span className="overview-symbol symbol-green">↗</span>
+              <span className="overview-symbol symbol-green">
+                ↗
+              </span>
             </div>
-            <span className="overview-footnote">All your submitted concerns</span>
+            <span className="overview-footnote">
+              All your submitted concerns
+            </span>
           </article>
 
           <article className="overview-card">
             <span className="overview-label">In progress</span>
             <div className="overview-value-row">
               <span className="overview-number">
-                {String(inProgressCount).padStart(2, "0")}
+                {String(inProgressCount).padStart(2, '0')}
               </span>
-              <span className="overview-symbol symbol-amber">◷</span>
+              <span className="overview-symbol symbol-amber">
+                ◷
+              </span>
             </div>
-            <span className="overview-footnote">Currently being addressed</span>
+            <span className="overview-footnote">
+              Currently being addressed
+            </span>
           </article>
 
           <article className="overview-card">
             <span className="overview-label">Awaiting review</span>
             <div className="overview-value-row">
               <span className="overview-number">
-                {String(awaitingReviewCount).padStart(2, "0")}
+                {String(awaitingReviewCount).padStart(2, '0')}
               </span>
-              <span className="overview-symbol symbol-coral">◎</span>
+              <span className="overview-symbol symbol-coral">
+                ◎
+              </span>
             </div>
-            <span className="overview-footnote">Waiting for coordinator review</span>
+            <span className="overview-footnote">
+              Waiting for coordinator review
+            </span>
           </article>
         </div>
       </section>
@@ -545,33 +646,54 @@ function DashboardPlaceholder() {
               <span className="section-overline">YOUR ACTIVITY</span>
               <h2>Recent cases.</h2>
             </div>
+
             <NavLink to="/cases" className="subtle-link">
               View all <ArrowUpRight size={15} />
             </NavLink>
           </div>
 
           <div className="case-list">
-            {cases.slice(0, 3).map((item) => (
-              <article className="dashboard-case" key={item.id}>
-                <div className="case-marker" />
+            {loading ? (
+              <p>Loading recent cases...</p>
+            ) : error ? (
+              <p>Recent cases could not be loaded.</p>
+            ) : displayCases.length === 0 ? (
+              <p>No cases submitted yet.</p>
+            ) : (
+              displayCases.slice(0, 3).map((item) => (
+                <article
+                  className="dashboard-case"
+                  key={item.id}
+                >
+                  <div className="case-marker" />
 
-                <div className="case-main">
-                  <div className="case-id">{item.id}</div>
-                  <h3>{item.title}</h3>
-                  <p>{item.categoryLabel} <span>·</span> {item.date}</p>
-                </div>
+                  <div className="case-main">
+                    <div className="case-id">{item.id}</div>
+                    <h3>{item.title}</h3>
+                    <p>
+                      {item.categoryLabel}
+                      <span> · </span>
+                      {item.date}
+                    </p>
+                  </div>
 
-                <div className="case-end">
-                  <span className={`status-badge case-status-${item.status}`}>
-                    <span className="status-dot" />
-                    {item.statusLabel}
-                  </span>
-                  <span className="case-progress-label">
-                    {item.progress === 100 ? 'Completed' : 'Status update'}
-                  </span>
-                </div>
-              </article>
-            ))}
+                  <div className="case-end">
+                    <span
+                      className={`status-badge case-status-${item.status.replaceAll('_', '-')}`}
+                    >
+                      <span className="status-dot" />
+                      {item.statusLabel}
+                    </span>
+
+                    <span className="case-progress-label">
+                      {item.progress === 100
+                        ? 'Completed'
+                        : 'Status update'}
+                    </span>
+                  </div>
+                </article>
+              ))
+            )}
           </div>
         </div>
 
@@ -580,8 +702,15 @@ function DashboardPlaceholder() {
             <ShieldCheck size={23} strokeWidth={1.6} />
           </div>
 
-          <span className="section-overline">YOUR PRIVACY MATTERS</span>
-          <h2>Your story.<br /><em>Your choices.</em></h2>
+          <span className="section-overline">
+            YOUR PRIVACY MATTERS
+          </span>
+
+          <h2>
+            Your story.
+            <br />
+            <em>Your choices.</em>
+          </h2>
 
           <p>
             Your identity-sharing preference helps determine who can
@@ -593,7 +722,9 @@ function DashboardPlaceholder() {
 
           <div className="privacy-promise">
             <span className="privacy-check">✓</span>
-            <span>Review your sharing preference when submitting a concern.</span>
+            <span>
+              Review your sharing preference when submitting a concern.
+            </span>
           </div>
 
           <div className="privacy-panel-links">
@@ -601,7 +732,7 @@ function DashboardPlaceholder() {
               to="/privacy-preferences"
               className="privacy-learn-link"
             >
-              Privacy & Preferences <span>↗</span>
+              Privacy &amp; Preferences <span>↗</span>
             </NavLink>
 
             <NavLink
@@ -618,19 +749,21 @@ function DashboardPlaceholder() {
         <span className="footnote-star">✳</span>
         <span>
           MindBridge is a student-support prototype. For urgent danger,
-          contact local emergency services or your institution's designated support team.
+          contact local emergency services or your institution's
+          designated support team.
         </span>
       </div>
     </main>
   );
 }
 
-
 function NotFound() {
   return (
     <main className="placeholder page-container">
       <h1>Let's find your way back.</h1>
-      <NavLink to="/" className="button-primary">Back to home</NavLink>
+      <NavLink to="/" className="button-primary">
+        Back to home
+      </NavLink>
     </main>
   );
 }
@@ -639,20 +772,27 @@ export default function App() {
   return (
     <BrowserRouter>
       <Navbar />
+
       <Routes>
         <Route path="/" element={<Home />} />
-        <Route path="/dashboard" element={<DashboardPlaceholder />} />
+        <Route
+          path="/dashboard"
+          element={<DashboardPlaceholder />}
+        />
         <Route path="/submit" element={<SubmitCase />} />
         <Route path="/cases" element={<MyCases />} />
         <Route path="/cases/:caseId" element={<CaseDetails />} />
+
         <Route
           path="/notifications"
           element={<Notifications />}
         />
+
         <Route
           path="/privacy-preferences"
           element={<PrivacyPreferences />}
         />
+
         <Route path="*" element={<NotFound />} />
 
         <Route

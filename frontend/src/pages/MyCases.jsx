@@ -11,7 +11,7 @@ import {
   CircleHelp,
 } from 'lucide-react';
 
-import { getCases } from "../services/mockCaseService";
+import { getMyCases } from "../services/caseService";
 
 
 function formatStoredCase(item) {
@@ -25,12 +25,12 @@ function formatStoredCase(item) {
   };
 
   const statusLabels = {
-    awaiting_review: 'Awaiting review',
-    under_review: 'Under review',
-    in_progress: 'In progress',
-    resolved: 'Resolved',
-    closed: 'Closed',
-  };
+  submitted: 'Submitted',
+  in_review: 'Under review',
+  in_progress: 'In progress',
+  resolved: 'Resolved',
+  closed: 'Closed',
+};
 
   return {
     ...item,
@@ -41,7 +41,7 @@ function formatStoredCase(item) {
       item.category,
     statusValue: item.statusValue ?? item.status,
     status: statusLabels[item.status] ?? item.status,
-    date: item.date ?? item.createdAt?.slice(0, 10) ?? '',
+    date: item.date ?? item.created_at?.slice(0, 10) ?? item.createdAt?.slice(0, 10) ?? '',
   };
 }
 
@@ -53,7 +53,15 @@ const filters = [
 ];
 
 function formatDate(date) {
-  return new Date(`${date}T00:00:00`).toLocaleDateString('en-IN', {
+  if (!date) return 'Date unavailable';
+
+  const parsedDate = new Date(`${date}T00:00:00`);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return 'Date unavailable';
+  }
+
+  return parsedDate.toLocaleDateString('en-IN', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
@@ -73,38 +81,57 @@ export default function MyCases() {
   const [activeFilter, setActiveFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [sortOrder, setSortOrder] = useState('newest');
-  const [cases, setCases] = useState(() =>
-    getCases().map(formatStoredCase)
-  );
 
-  useEffect(() => {
-    function refreshCases() {
-      setCases(getCases().map(formatStoredCase));
+const [cases, setCases] = useState([]);
+const [loading, setLoading] = useState(true);
+const [error, setError] = useState('');
+
+useEffect(() => {
+  let cancelled = false;
+
+  async function loadCases() {
+    try {
+      setLoading(true);
+      setError('');
+
+      const data = await getMyCases();
+
+      if (!cancelled) {
+        setCases(data.map(formatStoredCase));
+      }
+    } catch (err) {
+      if (!cancelled) {
+        setError(err.message || 'Could not load cases.');
+      }
+    } finally {
+      if (!cancelled) {
+        setLoading(false);
+      }
     }
+  }
 
-    refreshCases();
+  loadCases();
 
-    window.addEventListener('focus', refreshCases);
+  return () => {
+    cancelled = true;
+  };
+}, []);
 
-    return () => {
-      window.removeEventListener('focus', refreshCases);
-    };
-  }, []);
 
   const filteredCases = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
 
     return cases
       .filter((item) => {
-        const matchesFilter =
-          activeFilter === 'all' ||
-          (activeFilter === 'awaiting_review'
-            ? ['awaiting_review', 'under_review'].includes(item.statusValue)
-            : item.statusValue === activeFilter);
+       const matchesFilter =
+  activeFilter === 'all' ||
+  (activeFilter === 'awaiting_review'
+    ? ['submitted', 'in_review'].includes(item.statusValue)
+    : item.statusValue === activeFilter);
 
         const matchesSearch =
           !query ||
-          item.id.toLowerCase().includes(query) ||
+          String(item.id).toLowerCase().includes(query) ||
           item.title.toLowerCase().includes(query) ||
           item.category.toLowerCase().includes(query);
 
@@ -121,8 +148,8 @@ export default function MyCases() {
     all: cases.length,
 
     awaiting_review: cases.filter((item) =>
-      ['awaiting_review', 'under_review'].includes(item.statusValue)
-    ).length,
+  ['submitted', 'in_review'].includes(item.statusValue)
+).length,
 
     in_progress: cases.filter(
       (item) => item.statusValue === 'in_progress'
@@ -214,6 +241,13 @@ export default function MyCases() {
         </div>
 
         <div className="cases-results">
+
+{loading ? (
+  <p role="status">Loading your cases...</p>
+) : error ? (
+  <p role="alert">Could not load cases: {error}</p>
+) : null}
+
           {filteredCases.length > 0 ? (
             filteredCases.map((item, index) => (
               <article
