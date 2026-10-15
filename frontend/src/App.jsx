@@ -5,6 +5,8 @@ import {
   NavLink,
   Route,
   Routes,
+  useNavigate,
+  useLocation,
 } from 'react-router-dom';
 import {
   ArrowUpRight,
@@ -25,6 +27,24 @@ import { getCases } from "./services/mockCaseService";
 import PlaceholderPage from "./components/PlaceholderPage.jsx";
 
 function Navbar() {
+
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const handleHomeClick = (event) => {
+    if (location.pathname === '/') {
+      event.preventDefault();
+
+      if (location.hash) {
+        navigate('/', { replace: true });
+      }
+
+      window.scrollTo({
+        top: 0,
+        behavior: 'smooth',
+      });
+    }
+  };
   return (
     <header className="site-header">
       <nav className="navbar page-container" aria-label="Main navigation">
@@ -40,7 +60,7 @@ function Navbar() {
         </NavLink>
 
         <div className="nav-links">
-          <NavLink to="/" end className="nav-link">
+          <NavLink to="/" end className="nav-link" onClick={handleHomeClick}>
             <span className="nav-index">01</span> Home
           </NavLink>
           <a href="/#how-it-works" className="nav-link">
