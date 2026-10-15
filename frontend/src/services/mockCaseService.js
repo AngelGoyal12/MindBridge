@@ -59,7 +59,9 @@ export function saveCase(caseData) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedCases));
   } catch (error) {
     console.error("Could not save case:", error);
-    throw new Error("The case could not be saved in this browser.");
+    throw new Error("The case could not be saved in this browser.", {
+      cause: error,
+    });
   }
 
   return newCase;
@@ -126,7 +128,10 @@ export function updateCaseStatus(caseId, newStatus) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(cases));
   } catch (error) {
-    throw new Error("The status update could not be saved in this browser.");
+    throw new Error(
+      "The status update could not be saved in this browser.",
+      { cause: error }
+    );
   }
 
   return updatedCase;

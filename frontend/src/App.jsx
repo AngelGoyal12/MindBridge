@@ -188,7 +188,7 @@ function Home() {
           </div>
         </section>
 
-        <section className="trust-strip" id="privacy">
+        <section className="trust-strip" id="trust-strip">
           <div className="page-container trust-inner">
             <div className="trust-intro">Built around what matters</div>
             <div className="trust-item">
@@ -248,6 +248,52 @@ function Home() {
               <p>
                 Check permitted updates and understand where your
                 concern stands without starting from scratch.
+              </p>
+            </Reveal>
+          </div>
+        </section>
+
+        <section className="home-privacy-section page-container" id="privacy">
+          <Reveal>
+            <div className="section-heading">
+              <div>
+                <div className="eyebrow">Your privacy, your choices</div>
+                <h2>Support should feel safe.</h2>
+              </div>
+              <p>
+                You decide what identifying information you provide.
+                Access to sensitive case details should be limited to
+                authorized people who need that information to help.
+              </p>
+            </div>
+          </Reveal>
+
+          <div className="steps-grid">
+            <Reveal className="step-card">
+              <span className="step-number">01 / CHOICE</span>
+              <h3>Your identity preference</h3>
+              <p>
+                Choose an available identity-sharing preference when
+                submitting a concern.
+              </p>
+            </Reveal>
+
+            <Reveal className="step-card">
+              <span className="step-number">02 / ACCESS</span>
+              <h3>Need-to-know access</h3>
+              <p>
+                Sensitive information should only be available to
+                authorized staff according to their permissions.
+              </p>
+            </Reveal>
+
+            <Reveal className="step-card">
+              <span className="step-number">03 / CONTROL</span>
+              <h3>Human-led support</h3>
+              <p>
+                Authorized people review concerns and coordinate
+                support. This prototype does not guarantee complete
+                confidentiality or secure backend access.
               </p>
             </Reveal>
           </div>

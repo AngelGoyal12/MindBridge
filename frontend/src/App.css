@@ -3888,3 +3888,19 @@
   outline-offset: 4px;
   border-radius: 2px;
 }
+
+/* Home page privacy section spacing */
+.home-privacy-section {
+  padding-top: clamp(3.5rem, 7vw, 6rem);
+  padding-bottom: clamp(4rem, 7vw, 6rem);
+  margin-bottom: clamp(2rem, 4vw, 3.5rem);
+  scroll-margin-top: 100px;
+}
+
+.home-privacy-section .section-heading {
+  margin-bottom: 2.5rem;
+}
+
+.home-privacy-section .steps-grid {
+  margin-top: 2rem;
+}

@@ -105,7 +105,7 @@ function getCaseNotifications() {
       date,
       time,
       icon: Clock3,
-      unread: !Boolean(readStatus[`case-submitted-${item.id}`]),
+      unread: !readStatus[`case-submitted-${item.id}`],
     };
   });
 }

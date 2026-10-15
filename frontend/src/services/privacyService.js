@@ -25,7 +25,9 @@ export function saveIdentityPreference(preference) {
     localStorage.setItem(STORAGE_KEY, preference);
   } catch (error) {
     console.error("Could not save identity preference:", error);
-    throw new Error("Could not save your preference in this browser.");
+    throw new Error("Could not save your preference in this browser.", {
+      cause: error,
+    });
   }
 
   return preference;

@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUpRight, Construction } from "lucide-react";
+import { ArrowLeft, Construction } from "lucide-react";
 import { Link } from "react-router-dom";
 
 function PlaceholderPage({
