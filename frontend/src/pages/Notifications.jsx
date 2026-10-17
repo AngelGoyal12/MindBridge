@@ -8,7 +8,7 @@ import {
   MessageCircle,
   ShieldCheck,
 } from "lucide-react";
-import { getMyCases } from "../services/caseService";
+import { getMyNotifications } from "../services/authService";
 
 const STORAGE_KEY = "mindbridge_notifications_read";
 
@@ -44,12 +44,12 @@ function getDateParts(dateValue) {
   };
 }
 
-function createNotifications(cases, readStatus) {
-  return cases
+function createNotifications(items, readStatus) {
+  return items
     .map((item) => {
-      const id = `case-submitted-${item.id}`;
+      const id = item.id;
       const { date, time } = getDateParts(
-        item.created_at ?? item.createdAt ?? item.date
+        item.created_at
       );
 
       return {
@@ -65,13 +65,13 @@ function createNotifications(cases, readStatus) {
             closed: "Closed",
           }[item.status] ?? item.status ?? "Submitted"
         }.`,
-        caseId: item.id,
+        caseId: item.case_id,
         date,
         time,
         icon: Clock3,
         unread: !readStatus[id],
         sortDate: new Date(
-          item.created_at ?? item.createdAt ?? item.date ?? 0
+          item.created_at ?? 0
         ).getTime(),
       };
     })
@@ -137,7 +137,7 @@ function NotificationCard({ notification, onMarkRead }) {
 }
 
 export default function Notifications() {
-  const [cases, setCases] = useState([]);
+  const [items, setItems] = useState([]);
   const [readStatus, setReadStatus] = useState(readReadStatus);
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
@@ -146,15 +146,15 @@ export default function Notifications() {
   useEffect(() => {
     let cancelled = false;
 
-    async function loadCases() {
+    async function loadNotifications() {
       try {
         setLoading(true);
         setError("");
 
-        const data = await getMyCases();
+        const data = await getMyNotifications();
 
         if (!cancelled) {
-          setCases(Array.isArray(data) ? data : []);
+          setItems(Array.isArray(data) ? data : []);
         }
       } catch (err) {
         if (!cancelled) {
@@ -167,14 +167,14 @@ export default function Notifications() {
       }
     }
 
-    loadCases();
+    loadNotifications();
 
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const notifications = createNotifications(cases, readStatus);
+  const notifications = createNotifications(items, readStatus);
 
   const unreadCount = notifications.filter(
     (notification) => notification.unread
@@ -337,10 +337,8 @@ export default function Notifications() {
 
         <p className="notification-demo-note">
           <ShieldCheck size={15} aria-hidden="true" />
-          Notifications are generated from cases currently available
-          through the backend. Read status is saved in this browser.
-          Live coordinator alerts require a dedicated notification
-          backend.
+          Notifications are retrieved from your own cases through the
+          authenticated backend. Read status is saved in this browser.
         </p>
       </section>
     </main>

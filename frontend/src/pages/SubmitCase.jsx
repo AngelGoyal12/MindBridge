@@ -32,23 +32,23 @@ const categories = [
 const privacyOptions = [
     {
         value: 'identified',
-        title: 'Share my identity',
+        title: 'Identified case, consent-gated disclosure',
         description:
-            'Authorized recipients can see your identity when it is needed to handle your concern.',
+            'Your case is linked to your account. Coordinators still cannot see your identity unless you grant active, purpose-specific consent.',
         icon: Eye,
     },
     {
         value: 'restricted',
-        title: 'Restrict identity sharing',
+        title: 'Restricted, consent-gated disclosure',
         description:
-            'Limit identity access to specifically authorized people, where the workflow supports it.',
+            'Your case is linked to your account, but coordinator identity disclosure requires active consent matching the recipient, purpose, and scope.',
         icon: LockKeyhole,
     },
     {
         value: 'anonymous',
-        title: 'Submit anonymously',
+        title: 'Block coordinator identity disclosure',
         description:
-            'Do not show your identity to ordinary case recipients where supported. Incident details may still identify you indirectly.',
+            'Coordinator identity disclosure is blocked for this case. This does not remove your account link or guarantee anonymity; details you write may still identify you.',
         icon: EyeOff,
     },
 ];
@@ -158,6 +158,7 @@ async function handleSubmit(event) {
             title: form.title.trim(),
             category: form.category,
             description: form.description.trim(),
+            identity_mode: form.identityMode,
         });
 
         setSubmitted(true);
@@ -350,7 +351,7 @@ async function handleSubmit(event) {
                                     </span>
                                 ) : (
                                     <span id="description-hint">
-                                        Share only what you're comfortable sharing.
+                                        Routine coordinator review does not include this text. Avoid details that could identify you if you do not want them recorded in your case.
                                     </span>
                                 )}
                                 <span>{form.description.length}/5000</span>
@@ -474,10 +475,13 @@ async function handleSubmit(event) {
                             <ShieldCheck size={18} />
                             <p>
                                 <strong>What this means:</strong> Your selection records
-                                your preference; the backend must enforce access permissions.
-                                Anonymous handling may not be possible in every workflow,
-                                and incident details can sometimes reveal identity indirectly.
-                                Any required disclosure should follow applicable policy and law.
+                                the identity mode for this case. Coordinators never see your
+                                identity during routine review; identified and restricted
+                                cases still require your active, purpose-specific consent for
+                                disclosure. The block-disclosure mode prevents that endpoint
+                                from revealing identity, but does not unlink your account or
+                                guarantee anonymity. Avoid putting identifying details in text
+                                if you do not want them recorded in the case.
                             </p>
                         </div>
 

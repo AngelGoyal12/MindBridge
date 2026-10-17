@@ -1,8 +1,10 @@
-
-import { useEffect, useState } from 'react';
+import Login from "./pages/Login.jsx";
+import Register from "./pages/Register";
+import { useEffect, useRef, useState } from 'react';
 import {
   BrowserRouter,
   NavLink,
+  Navigate,
   Route,
   Routes,
   useNavigate,
@@ -11,9 +13,11 @@ import {
 import {
   ArrowUpRight,
   Bell,
+  ChevronDown,
   HeartHandshake,
   Menu,
   ShieldCheck,
+  UserRound,
 } from 'lucide-react';
 
 import './App.css';
@@ -23,11 +27,103 @@ import CaseDetails from './pages/CaseDetails.jsx';
 import Notifications from './pages/Notifications.jsx';
 import PrivacyPreferences from './pages/PrivacyPreferences.jsx';
 import { getMyCases } from './services/caseService';
+import { AuthProvider } from './context/AuthContext.jsx';
+import { useAuth } from './context/authContext.js';
+import RoleDashboard from './pages/RoleDashboard.jsx';
 import PlaceholderPage from './components/PlaceholderPage.jsx';
+import Profile from './pages/Profile.jsx';
+import VerifyEmail from './pages/VerifyEmail.jsx';
+import DepartmentPortal from './pages/DepartmentPortal.jsx';
+import CoordinatorInvitation from './pages/CoordinatorInvitation.jsx';
+
+const DASHBOARD_PATHS = {
+  student: '/dashboard/student',
+  coordinator: '/dashboard/coordinator',
+  admin: '/dashboard/admin',
+  department_staff: '/dashboard/department',
+};
+
+function ProtectedRoute({ children, roles }) {
+  const { user, loading, authError, restoreSession } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
+    return (
+      <main className="page-container">
+        <p role="status">Checking your session...</p>
+      </main>
+    );
+  }
+
+  if (authError) {
+    return (
+      <main className="page-container">
+        <p role="alert">{authError}</p>
+        <button type="button" className="secondary-button" onClick={restoreSession}>
+          Retry session check
+        </button>
+      </main>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+
+  if (roles && !roles.includes(user.role)) {
+    return <Navigate to={DASHBOARD_PATHS[user.role] || '/'} replace />;
+  }
+
+  return children;
+}
 
 function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, signOut } = useAuth();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState('');
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileMenuRef = useRef(null);
+  const profileButtonRef = useRef(null);
+
+  useEffect(() => {
+    if (!profileMenuOpen) return undefined;
+
+    function closeFromOutside(event) {
+      if (!profileMenuRef.current?.contains(event.target)) {
+        setProfileMenuOpen(false);
+      }
+    }
+    function closeOnEscape(event) {
+      if (event.key === 'Escape') {
+        setProfileMenuOpen(false);
+        profileButtonRef.current?.focus();
+      }
+    }
+    document.addEventListener('pointerdown', closeFromOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeFromOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [profileMenuOpen]);
+
+  const handleLogout = async () => {
+    if (isLoggingOut) return;
+
+    setIsLoggingOut(true);
+    setLogoutError('');
+    try {
+      await signOut();
+      setProfileMenuOpen(false);
+      navigate('/login', { replace: true });
+    } catch {
+      setLogoutError('Logout failed. Please try again.');
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
 
   const handleHomeClick = (event) => {
     if (location.pathname === '/') {
@@ -80,22 +176,78 @@ function Navbar() {
         </div>
 
         <div className="nav-actions">
-          <NavLink
-            to="/notifications"
-            className="nav-notifications"
-            aria-label="Notifications"
-            title="Notifications"
-          >
-            <Bell size={19} />
-            <span>Notifications</span>
-          </NavLink>
+          {user && (
+            <div className="nav-profile-menu" ref={profileMenuRef}>
+              <button
+                ref={profileButtonRef}
+                type="button"
+                className="nav-action nav-profile-trigger"
+                aria-haspopup="menu"
+                aria-expanded={profileMenuOpen}
+                onClick={() => setProfileMenuOpen((open) => !open)}
+              >
+                <UserRound size={18} aria-hidden="true" />
+                <span className="nav-profile-name">{user.name}</span>
+                <ChevronDown size={15} aria-hidden="true" />
+              </button>
+              {profileMenuOpen && (
+                <div className="nav-profile-dropdown" aria-label="Account menu">
+                  <div className="nav-profile-role">{user.role.replaceAll('_', ' ')}</div>
+                  <NavLink
+                    to="/profile"
+                    onClick={() => setProfileMenuOpen(false)}
+                  >
+                    Profile / My Account
+                  </NavLink>
+                  <NavLink
+                    to="/profile#edit-profile"
+                    onClick={() => setProfileMenuOpen(false)}
+                  >
+                    Edit Profile
+                  </NavLink>
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    disabled={isLoggingOut}
+                  >
+                    {isLoggingOut ? 'Logging out...' : 'Log out'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {user?.role === 'student' && (
+            <NavLink
+              to="/notifications"
+              className="nav-notifications"
+              aria-label="Notifications"
+              title="Notifications"
+            >
+              <Bell size={19} />
+              <span>Notifications</span>
+            </NavLink>
+          )}
 
           <NavLink to="/dashboard" className="nav-action">
             <span className="portal-dot" />
-            <span>Open your space</span>
+            <span>{user ? 'Open workspace' : 'Open your space'}</span>
             <ArrowUpRight size={16} />
           </NavLink>
+          {!user && (
+            <NavLink to="/register" className="nav-action">
+              <span>Create account</span>
+              <ArrowUpRight size={16} />
+            </NavLink>
+          )}
+
         </div>
+
+        {logoutError && (
+          <p className="nav-logout-error" role="alert">
+            {logoutError}
+          </p>
+        )}
 
         <button
           className="mobile-menu"
@@ -177,6 +329,10 @@ function Home() {
               <NavLink to="/dashboard" className="button-primary">
                 Explore student portal
                 <ArrowUpRight size={18} />
+              </NavLink>
+
+              <NavLink to="/register" className="text-link">
+                Create student account <ArrowUpRight size={16} />
               </NavLink>
 
               <a href="#how-it-works" className="text-link">
@@ -399,6 +555,7 @@ function Home() {
             </NavLink>
 
             <div className="footer-page-links">
+              <NavLink to="/department-portal">Department</NavLink>
               <NavLink to="/help">Help &amp; Support</NavLink>
               <NavLink to="/about">About</NavLink>
               <NavLink to="/departments">Departments</NavLink>
@@ -768,77 +925,168 @@ function NotFound() {
   );
 }
 
+function DashboardRedirect() {
+  const { user } = useAuth();
+  return (
+    <Navigate
+      to={DASHBOARD_PATHS[user.role] || '/'}
+      replace
+    />
+  );
+}
+
 export default function App() {
   return (
     <BrowserRouter>
-      <Navbar />
+      <AuthProvider>
+        <Navbar />
 
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route
-          path="/dashboard"
-          element={<DashboardPlaceholder />}
-        />
-        <Route path="/submit" element={<SubmitCase />} />
-        <Route path="/cases" element={<MyCases />} />
-        <Route path="/cases/:caseId" element={<CaseDetails />} />
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
+          <Route path="/department-portal" element={<DepartmentPortal />} />
+          <Route
+            path="/coordinator-invitation"
+            element={<CoordinatorInvitation />}
+          />
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <DashboardRedirect />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <Profile />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/dashboard/student"
+            element={
+              <ProtectedRoute roles={['student']}>
+                <DashboardPlaceholder />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/dashboard/coordinator"
+            element={
+              <ProtectedRoute roles={['coordinator']}>
+                <RoleDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/dashboard/admin"
+            element={
+              <ProtectedRoute roles={['admin']}>
+                <RoleDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/dashboard/department"
+            element={
+              <ProtectedRoute roles={['department_staff']}>
+                <RoleDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/submit"
+            element={
+              <ProtectedRoute roles={['student']}>
+                <SubmitCase />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/cases"
+            element={
+              <ProtectedRoute roles={['student']}>
+                <MyCases />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/cases/:caseId"
+            element={
+              <ProtectedRoute roles={['student']}>
+                <CaseDetails />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/notifications"
+            element={
+              <ProtectedRoute roles={['student']}>
+                <Notifications />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/privacy-preferences"
+            element={
+              <ProtectedRoute roles={['student']}>
+                <PrivacyPreferences />
+              </ProtectedRoute>
+            }
+          />
 
-        <Route
-          path="/notifications"
-          element={<Notifications />}
-        />
+          <Route path="*" element={<NotFound />} />
 
-        <Route
-          path="/privacy-preferences"
-          element={<PrivacyPreferences />}
-        />
+          <Route
+            path="/help"
+            element={
+              <PlaceholderPage
+                eyebrow="SUPPORT"
+                title="We're here to help."
+                description="Find guidance on using MindBridge, understanding the support process, and getting help when you need it."
+              />
+            }
+          />
 
-        <Route path="*" element={<NotFound />} />
+          <Route
+            path="/about"
+            element={
+              <PlaceholderPage
+                eyebrow="OUR PURPOSE"
+                title="Support that puts students first."
+                description="MindBridge helps coordinate student support through a privacy-conscious, human-centred approach."
+              />
+            }
+          />
 
-        <Route
-          path="/help"
-          element={
-            <PlaceholderPage
-              eyebrow="SUPPORT"
-              title="We're here to help."
-              description="Find guidance on using MindBridge, understanding the support process, and getting help when you need it."
-            />
-          }
-        />
+          <Route
+            path="/accessibility"
+            element={
+              <PlaceholderPage
+                eyebrow="ACCESSIBILITY"
+                title="Support should be accessible to everyone."
+                description="We're working towards a clear, inclusive, and accessible experience for every student."
+              />
+            }
+          />
 
-        <Route
-          path="/about"
-          element={
-            <PlaceholderPage
-              eyebrow="OUR PURPOSE"
-              title="Support that puts students first."
-              description="MindBridge helps coordinate student support through a privacy-conscious, human-centred approach."
-            />
-          }
-        />
-
-        <Route
-          path="/accessibility"
-          element={
-            <PlaceholderPage
-              eyebrow="ACCESSIBILITY"
-              title="Support should be accessible to everyone."
-              description="We're working towards a clear, inclusive, and accessible experience for every student."
-            />
-          }
-        />
-
-        <Route
-          path="/departments"
-          element={
-            <PlaceholderPage
-              eyebrow="STUDENT SUPPORT"
-              title="Find the right support."
-              description="Explore the departments and support services that will help students navigate their concerns."
-            />
-          }
-        />
-      </Routes>
+          <Route
+            path="/departments"
+            element={
+              <PlaceholderPage
+                eyebrow="STUDENT SUPPORT"
+                title="Find the right support."
+                description="Explore the departments and support services that will help students navigate their concerns."
+              />
+            }
+          />
+        </Routes>
+      </AuthProvider>
     </BrowserRouter>
   );
 }
