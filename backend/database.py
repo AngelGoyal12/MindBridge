@@ -1,40 +1,46 @@
-
 import os
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
+from sqlalchemy.engine import URL
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.pool import StaticPool
 
-# Load settings from the .env file
 load_dotenv()
 
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "3306")
-DB_NAME = os.getenv("DB_NAME", "mindbridge")
+TESTING = os.getenv("MINDBRIDGE_TESTING") == "1"
 
-if not DB_USER or DB_PASSWORD is None:
-    raise RuntimeError(
-        "DB_USER or DB_PASSWORD is missing from the .env file"
+if TESTING:
+    DATABASE_URL = URL.create(
+        drivername="sqlite",
+        database=":memory:",
     )
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+else:
+    DB_USER = os.getenv("DB_USER")
+    DB_PASSWORD = os.getenv("DB_PASSWORD")
+    DB_HOST = os.getenv("DB_HOST", "localhost")
+    DB_PORT = os.getenv("DB_PORT", "3306")
+    DB_NAME = os.getenv("DB_NAME", "mindbridge")
 
-# Build the MySQL connection URL safely
-from sqlalchemy.engine import URL
+    if not DB_USER or DB_PASSWORD is None:
+        raise RuntimeError(
+            "DB_USER or DB_PASSWORD is missing from the .env file"
+        )
 
-DATABASE_URL = URL.create(
-    drivername="mysql+pymysql",
-    username=DB_USER,
-    password=DB_PASSWORD,
-    host=DB_HOST,
-    port=int(DB_PORT),
-    database=DB_NAME,
-)
-
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-)
+    DATABASE_URL = URL.create(
+        drivername="mysql+pymysql",
+        username=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=int(DB_PORT),
+        database=DB_NAME,
+    )
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
 SessionLocal = sessionmaker(
     bind=engine,

@@ -13,7 +13,14 @@ import {
   CircleCheck,
 } from 'lucide-react';
 
-import { getCaseById } from "../services/caseService";
+import {
+  getCaseById,
+  getCaseConsents,
+  getCaseDisclosureAudit,
+  grantCaseConsent,
+  updateCaseIdentity,
+  withdrawCaseConsent,
+} from "../services/caseService";
 
 // Temporary demo data. Later, Person 2's API will provide case records.
 // const demoCases = [
@@ -163,6 +170,7 @@ function formatStoredCase(item) {
 
   return {
     ...item,
+    identityMode: item.identity_mode ?? item.identityMode ?? 'restricted',
     category:
       categoryLabels[item.category] ??
       item.categoryLabel ??
@@ -191,21 +199,21 @@ function formatStoredCase(item) {
 
 const privacyDetails = {
   identified: {
-    title: 'Identity shared with authorized recipients',
+    title: 'Identified case; disclosure still requires consent',
     description:
-      'Your identity may be available to authorized people handling the concern, according to their permissions.',
+      'Your case is linked to your account. Coordinators do not see your identity in routine review; exact, active consent is still required.',
     icon: ShieldCheck,
   },
   restricted: {
     title: 'Restricted identity sharing',
     description:
-      'Your identity should only be accessible to specifically authorized recipients. The backend must enforce these permissions.',
+      'Your case is linked to your account. Coordinators do not see your identity in routine review; disclosure requires exact, active consent.',
     icon: LockKeyhole,
   },
   anonymous: {
-    title: 'Anonymous preference selected',
+    title: 'Coordinator identity disclosure blocked',
     description:
-      'Ordinary case recipients should not see your identity where supported. Details in the report may still indirectly identify you.',
+      'Identity disclosure is blocked for this case. The case remains linked to your account, and details you submitted may still identify you.',
     icon: ShieldCheck,
   },
 };
@@ -241,6 +249,17 @@ export default function CaseDetails() {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [consents, setConsents] = useState([]);
+  const [disclosureAudit, setDisclosureAudit] = useState([]);
+  const [consentLoading, setConsentLoading] = useState(true);
+  const [consentError, setConsentError] = useState('');
+  const [consentMessage, setConsentMessage] = useState('');
+  const [consentForm, setConsentForm] = useState({
+    recipient: '',
+    purpose: '',
+    scope: '',
+  });
+  const [identitySaving, setIdentitySaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -255,12 +274,35 @@ export default function CaseDetails() {
         if (!cancelled) {
           setCaseItem(formatStoredCase(data));
         }
+        const [consentResult, auditResult] = await Promise.allSettled([
+          getCaseConsents(caseId),
+          getCaseDisclosureAudit(caseId),
+        ]);
+        if (!cancelled) {
+          setConsentError('');
+          if (consentResult.status === 'fulfilled') {
+            setConsents(consentResult.value);
+          } else {
+            setConsentError(
+              consentResult.reason?.message || 'Could not load consent history.',
+            );
+          }
+          if (auditResult.status === 'fulfilled') {
+            setDisclosureAudit(auditResult.value);
+          } else {
+            setConsentError((current) =>
+              current || auditResult.reason?.message ||
+                'Could not load disclosure audit history.',
+            );
+          }
+        }
       } catch (err) {
         if (!cancelled) {
           setCaseItem(null);
           setError(err.message || 'Could not load this case.');
         }
       } finally {
+        if (!cancelled) setConsentLoading(false);
         if (!cancelled) {
           setLoading(false);
         }
@@ -273,6 +315,56 @@ export default function CaseDetails() {
       cancelled = true;
     };
   }, [caseId]);
+
+  async function handleIdentityChange(event) {
+    const identityMode = event.target.value;
+    setIdentitySaving(true);
+    setConsentError('');
+    try {
+      const response = await updateCaseIdentity(caseId, identityMode);
+      setCaseItem((current) => ({
+        ...current,
+        identityMode: response.case.identity_mode,
+      }));
+    } catch (err) {
+      setConsentError(err.message || 'Could not update the identity preference.');
+    } finally {
+      setIdentitySaving(false);
+    }
+  }
+
+  async function handleGrantConsent(event) {
+    event.preventDefault();
+    setConsentError('');
+    setConsentMessage('');
+    try {
+      await grantCaseConsent(caseId, {
+        ...consentForm,
+        recipient: consentForm.recipient.trim(),
+        purpose: consentForm.purpose.trim(),
+        scope: consentForm.scope.trim(),
+      });
+      setConsentForm({ recipient: '', purpose: '', scope: '' });
+      setConsents(await getCaseConsents(caseId));
+      setDisclosureAudit(await getCaseDisclosureAudit(caseId));
+      setConsentMessage('Your consent has been recorded.');
+    } catch (err) {
+      setConsentError(err.message || 'Could not record consent.');
+    }
+  }
+
+  async function handleWithdrawConsent(consentId) {
+    setConsentError('');
+    setConsentMessage('');
+    try {
+      await withdrawCaseConsent(caseId, consentId);
+      setConsents(await getCaseConsents(caseId));
+      setDisclosureAudit(await getCaseDisclosureAudit(caseId));
+      setConsentMessage('Consent has been withdrawn.');
+    } catch (err) {
+      setConsentError(err.message || 'Could not withdraw consent.');
+    }
+  }
 
   if (loading) {
   return (
@@ -429,6 +521,143 @@ export default function CaseDetails() {
   The current case status comes from the backend. Historical
   status changes are not available yet.
 </p>
+          </section>
+
+          <section className="detail-panel">
+            <div className="detail-panel-heading">
+              <div>
+                <span className="section-overline">IDENTITY & CONSENT</span>
+                <h2>Manage identity access</h2>
+              </div>
+            </div>
+            <p>
+              Identity is not shared with coordinators by default. A coordinator
+              can receive it only for the exact purpose and scope you authorize.
+              The block-disclosure mode prevents identity disclosure but does not
+              unlink your account or guarantee anonymity.
+            </p>
+            <div className="field-group" style={{ marginTop: '18px' }}>
+              <label htmlFor="case-identity-mode">Identity preference</label>
+              <select
+                id="case-identity-mode"
+                value={caseItem.identityMode}
+                onChange={handleIdentityChange}
+                disabled={identitySaving}
+              >
+                <option value="identified">Identified</option>
+                <option value="restricted">Restricted</option>
+                <option value="anonymous">Block coordinator identity disclosure</option>
+              </select>
+            </div>
+
+            <form onSubmit={handleGrantConsent} style={{ marginTop: '24px' }}>
+              <h3>Grant purpose-specific consent</h3>
+              <p>
+                The recipient must be the coordinator currently assigned to
+                this case. Enter their account email.
+              </p>
+              <div className="field-group" style={{ marginTop: '16px' }}>
+                <label htmlFor="consent-recipient">Coordinator email</label>
+                <input
+                  id="consent-recipient"
+                  type="email"
+                  required
+                  value={consentForm.recipient}
+                  onChange={(event) => setConsentForm((current) => ({
+                    ...current,
+                    recipient: event.target.value,
+                  }))}
+                />
+              </div>
+              <div className="field-group" style={{ marginTop: '16px' }}>
+                <label htmlFor="consent-purpose">Purpose</label>
+                <input
+                  id="consent-purpose"
+                  required
+                  minLength={2}
+                  maxLength={255}
+                  value={consentForm.purpose}
+                  onChange={(event) => setConsentForm((current) => ({
+                    ...current,
+                    purpose: event.target.value,
+                  }))}
+                />
+              </div>
+              <div className="field-group" style={{ marginTop: '16px' }}>
+                <label htmlFor="consent-scope">Scope</label>
+                <textarea
+                  id="consent-scope"
+                  required
+                  minLength={2}
+                  maxLength={2000}
+                  value={consentForm.scope}
+                  onChange={(event) => setConsentForm((current) => ({
+                    ...current,
+                    scope: event.target.value,
+                  }))}
+                />
+              </div>
+              <button
+                type="submit"
+                className="button-primary"
+                style={{ marginTop: '16px' }}
+                disabled={caseItem.identityMode === 'anonymous'}
+              >
+                Grant consent
+              </button>
+              {caseItem.identityMode === 'anonymous' && (
+                <p>Change the identity mode before granting identity disclosure consent.</p>
+              )}
+            </form>
+
+            {consentError && <p role="alert" className="field-error">{consentError}</p>}
+            {consentMessage && <p role="status">{consentMessage}</p>}
+
+            <h3 style={{ marginTop: '28px' }}>Consent history</h3>
+            {consentLoading ? (
+              <p role="status">Loading consent history...</p>
+            ) : consents.length === 0 ? (
+              <p>No consent grants have been recorded for this case.</p>
+            ) : (
+              <ul>
+                {consents.map((consent) => (
+                  <li key={consent.id} style={{ marginBlock: '12px' }}>
+                    <strong>{consent.purpose}</strong>
+                    <div>{consent.recipient} — {consent.scope}</div>
+                    <div>
+                      {consent.granted && !consent.withdrawn_at
+                        ? caseItem.identityMode === 'anonymous'
+                          ? 'Grant active; disclosure blocked by current identity mode'
+                          : 'Active'
+                        : 'Withdrawn'}
+                    </div>
+                    {consent.granted && !consent.withdrawn_at && (
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => handleWithdrawConsent(consent.id)}
+                      >
+                        Withdraw
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <h3 style={{ marginTop: '28px' }}>Identity disclosure audit</h3>
+            {disclosureAudit.length === 0 ? (
+              <p>No identity disclosure actions have been recorded.</p>
+            ) : (
+              <ul>
+                {disclosureAudit.map((entry, index) => (
+                  <li key={`${entry.created_at}-${index}`}>
+                    {entry.decision}: {entry.purpose} — {entry.recipient}
+                    {entry.created_at && ` (${formatDate(entry.created_at.slice(0, 10))})`}
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
 
           <section className="detail-panel">

@@ -20,23 +20,23 @@ import {
 const identityOptions = [
     {
         value: "identified",
-        title: "Share my identity",
+        title: "Identified case; explicit consent still required",
         description:
-            "Your identity may be visible to authorized staff handling your case, according to their permissions.",
+            "The case is linked to your account. Coordinators still cannot see your identity unless you grant active, purpose-specific consent.",
         icon: UserRound,
     },
     {
         value: "restricted",
-        title: "Restrict identity sharing",
+        title: "Restricted, consent-gated disclosure",
         description:
-            "Limit identity visibility to specifically authorized staff where the workflow supports it.",
+            "Keep identity withheld by default; only exact, active consent can authorize coordinator disclosure.",
         icon: EyeOff,
     },
     {
         value: "anonymous",
-        title: "Submit anonymously",
+        title: "Block coordinator identity disclosure",
         description:
-            "Request that your identity not be shared with case handlers. Some workflows may require contact details or may not support full anonymity.",
+            "Coordinator identity disclosure is blocked for cases submitted anonymously. Details in your report may still identify you.",
         icon: Eye,
     },
 ];
@@ -88,8 +88,8 @@ export default function PrivacyPreferences() {
                     <div>
                         <h2>Identity-sharing preference</h2>
                         <p>
-                            Choose your preferred identity-sharing setting for future
-                            submissions in this demo.
+                            Choose the identity mode used as the browser-only default
+                            for future case submissions.
                         </p>
                     </div>
                 </div>
@@ -161,7 +161,7 @@ export default function PrivacyPreferences() {
                 {saved && (
                     <p className="privacy-settings-feedback" role="status">
                         <Check size={17} aria-hidden="true" />
-                        Your preference has been saved in this browser and will be used as the default for future submissions.
+                        Saved in this browser only. This preference does not sync across devices or change existing cases.
                     </p>
                 )}
                 {saveError && (
