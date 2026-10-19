@@ -1098,6 +1098,29 @@ def test_resend_delivery_failure_restores_previous_code_and_limits(
     ).status_code == 200
 
 
+def test_resend_without_pending_registration_is_generic_and_does_not_send(
+    test_client,
+    monkeypatch,
+):
+    import main
+
+    deliveries = []
+    monkeypatch.setattr(
+        main,
+        "send_verification_email",
+        lambda *args: deliveries.append(args),
+    )
+
+    response = test_client.post(
+        "/api/v1/auth/resend-verification",
+        json={"email": "no.pending@college.example.edu.in"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["resend_cooldown_seconds"] == 60
+    assert deliveries == []
+
+
 def test_email_otp_verifies_once_and_only_then_allows_login(
     test_client,
     monkeypatch,
@@ -1161,6 +1184,122 @@ def test_email_otp_verifies_once_and_only_then_allows_login(
         json={"email": email, "otp": otp},
     )
     assert replay.status_code == 400
+
+
+def test_complete_registration_otp_flow_with_mocked_smtp(
+    test_client,
+    monkeypatch,
+):
+    import hmac
+    import re
+
+    import models
+    from auth.dependencies import get_db
+    from auth.email_verification import hash_otp
+    import auth.email_verification as email_verification
+
+    delivered_messages = []
+    monkeypatch.setattr(
+        email_verification,
+        "send_email",
+        delivered_messages.append,
+    )
+
+    email = "complete.flow@college.example.edu.in"
+    registration = test_client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "Complete Flow Student",
+            "email": email,
+            "phone": "9876543210",
+            "password": "CompleteFlowPassword123!",
+            "confirm_password": "CompleteFlowPassword123!",
+        },
+    )
+    assert registration.status_code == 202
+    assert len(delivered_messages) == 1
+    message = delivered_messages[0]
+    assert message["To"] == email
+    otp_matches = re.findall(
+        r"Use this one-time code to verify your MindBridge account: (\d{6})",
+        message.get_content(),
+    )
+    assert len(otp_matches) == 1
+    otp = otp_matches[0]
+    assert otp not in registration.text
+
+    db = next(app.dependency_overrides[get_db]())
+    try:
+        pending = db.query(models.PendingEmailVerification).filter_by(
+            email=email
+        ).one()
+        assert hmac.compare_digest(pending.otp_hash, hash_otp(email, otp))
+    finally:
+        db.close()
+
+    invalid_otp = "000000" if otp != "000000" else "000001"
+    invalid = test_client.post(
+        "/api/v1/auth/verify-email",
+        json={"email": email, "otp": invalid_otp},
+    )
+    assert invalid.status_code == 400
+    assert test_client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": "CompleteFlowPassword123!"},
+    ).status_code == 401
+
+    verified = test_client.post(
+        "/api/v1/auth/verify-email",
+        json={"email": email, "otp": otp},
+    )
+    assert verified.status_code == 200
+    assert test_client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": "CompleteFlowPassword123!"},
+    ).status_code == 200
+
+    expired_email = "expired.flow@college.example.edu.in"
+    expired_registration = test_client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "Expired Flow Student",
+            "email": expired_email,
+            "phone": "9876543210",
+            "password": "ExpiredFlowPassword123!",
+            "confirm_password": "ExpiredFlowPassword123!",
+        },
+    )
+    assert expired_registration.status_code == 202
+    assert len(delivered_messages) == 2
+    expired_message = delivered_messages[1]
+    assert expired_message["To"] == expired_email
+    expired_otp_matches = re.findall(
+        r"Use this one-time code to verify your MindBridge account: (\d{6})",
+        expired_message.get_content(),
+    )
+    assert len(expired_otp_matches) == 1
+    expired_otp = expired_otp_matches[0]
+
+    db = next(app.dependency_overrides[get_db]())
+    try:
+        pending = db.query(models.PendingEmailVerification).filter_by(
+            email=expired_email
+        ).one()
+        pending.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        db.commit()
+    finally:
+        db.close()
+
+    expired = test_client.post(
+        "/api/v1/auth/verify-email",
+        json={"email": expired_email, "otp": expired_otp},
+    )
+    assert expired.status_code == 400
+    assert "expired" in expired.json()["detail"].lower()
+    assert test_client.post(
+        "/api/v1/auth/login",
+        json={"email": expired_email, "password": "ExpiredFlowPassword123!"},
+    ).status_code == 401
 
 
 def test_otp_expires_and_resend_supersedes_previous_code(
