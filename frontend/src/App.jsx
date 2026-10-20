@@ -36,7 +36,7 @@ import Profile from './pages/Profile.jsx';
 import VerifyEmail from './pages/VerifyEmail.jsx';
 import DepartmentPortal from './pages/DepartmentPortal.jsx';
 import CoordinatorInvitation from './pages/CoordinatorInvitation.jsx';
-import { caseStatusLabel, normalizeCaseStatus } from './services/casePresentation.js';
+import { caseStatusLabel, normalizeCaseStatus, roleLabel } from './services/casePresentation.js';
 
 const DASHBOARD_PATHS = {
   student: '/dashboard/student',
@@ -195,7 +195,7 @@ function Navbar() {
               </button>
               {profileMenuOpen && (
                 <div className="nav-profile-dropdown" aria-label="Account menu">
-                  <div className="nav-profile-role">{user.role.replaceAll('_', ' ')}</div>
+                  <div className="nav-profile-role">{roleLabel(user.role)}</div>
                   <NavLink
                     to="/profile"
                     onClick={() => setProfileMenuOpen(false)}

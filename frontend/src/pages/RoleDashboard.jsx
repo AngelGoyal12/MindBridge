@@ -1,16 +1,21 @@
 import { useEffect, useState } from "react";
 
+import CaseTaskManager from "../components/CaseTaskManager";
+import DepartmentTaskDashboard from "../components/DepartmentTaskDashboard";
+import MessageCenter from "../components/MessageCenter";
 import { useAuth } from "../context/authContext";
 import { caseStatusLabel, statusTimestamp } from "../services/casePresentation";
 import {
   assignCoordinator,
   assignDepartment,
   getAdminCases,
+  getAdminTasks,
   getAuthorizedDepartments,
   createCoordinatorProgressUpdate,
   createDepartmentActionRequest,
   getCoordinatorCases,
   getCoordinatorActionRequests,
+  getCoordinatorTasks,
   getDepartmentCases,
   decideCoordinatorActionRequest,
   updateCoordinatorCaseStatus,
@@ -18,13 +23,15 @@ import {
 
 const statusOptions = ["in_review", "in_progress", "closed"];
 
+// Display names only: the internal role values stay admin / coordinator /
+// department_staff.
 const labels = {
-  coordinator: "Coordinator workspace",
-  admin: "Administration",
-  department_staff: "Department workspace",
+  coordinator: "Department Coordinator workspace",
+  admin: "Main Coordinator workspace",
+  department_staff: "Department Staff workspace",
 };
 
-function CaseRows({ cases, departments, role, onUpdate }) {
+function CaseRows({ cases, departments, role, onUpdate, tasks = [], onTaskSaved }) {
   const [assignments, setAssignments] = useState({});
   const [assignmentErrors, setAssignmentErrors] = useState({});
   const [assignmentLoading, setAssignmentLoading] = useState({});
@@ -51,7 +58,7 @@ function CaseRows({ cases, departments, role, onUpdate }) {
     if (!coordinatorEmail) {
       setAssignmentErrors((current) => ({
         ...current,
-        [caseItem.id]: "Enter a coordinator email address.",
+        [caseItem.id]: "Enter a Department Coordinator email address.",
       }));
       return;
     }
@@ -71,13 +78,13 @@ function CaseRows({ cases, departments, role, onUpdate }) {
       }));
       setMessage(
         result.assignment_status === "invitation_sent"
-          ? `Coordinator invitation sent for case ${caseItem.id}.`
-          : `Coordinator assigned successfully to case ${caseItem.id}.`,
+          ? `Department Coordinator invitation sent for case ${caseItem.id}.`
+          : `Department Coordinator assigned successfully to case ${caseItem.id}.`,
       );
     } catch (err) {
       setAssignmentErrors((current) => ({
         ...current,
-        [caseItem.id]: err.message || "Could not assign coordinator.",
+        [caseItem.id]: err.message || "Could not assign Department Coordinator.",
       }));
     } finally {
       setAssignmentLoading((current) => ({
@@ -201,7 +208,7 @@ function CaseRows({ cases, departments, role, onUpdate }) {
         ...current,
         [caseItem.id]: { request_type: "update", message: "" },
       }));
-      setMessage(`Update sent to the Coordinator for case ${caseItem.id}.`);
+      setMessage(`Update sent to the Department Coordinator for case ${caseItem.id}.`);
     } catch (err) {
       setActionErrors((current) => ({
         ...current,
@@ -356,12 +363,12 @@ function CaseRows({ cases, departments, role, onUpdate }) {
             </section>
             <div className="role-assignment-controls">
               <label className="field-group">
-                Coordinator email
+                Department Coordinator email
                 <input
                   type="email"
                   autoComplete="off"
                   placeholder="coordinator@institution.edu"
-                  aria-label={`Coordinator email for case ${caseItem.id}`}
+                  aria-label={`Department Coordinator email for case ${caseItem.id}`}
                   value={
                     assignments[caseItem.id] ??
                     caseItem.assigned_coordinator_email ??
@@ -386,7 +393,7 @@ function CaseRows({ cases, departments, role, onUpdate }) {
               >
                 {assignmentLoading[caseItem.id]
                   ? "Sending..."
-                  : "Assign / invite coordinator"}
+                  : "Assign / invite Department Coordinator"}
               </button>
               {assignmentErrors[caseItem.id] && (
                 <p role="alert" className="field-error">
@@ -467,6 +474,17 @@ function CaseRows({ cases, departments, role, onUpdate }) {
             </div>
           )}
 
+          {(role === "coordinator" || role === "admin") && onTaskSaved && (
+            <CaseTaskManager
+              caseItem={caseItem}
+              departments={departments}
+              tasks={tasks.filter((task) => task.case_id === caseItem.id)}
+              onTaskSaved={onTaskSaved}
+              onFeedback={setMessage}
+              asAdmin={role === "admin"}
+            />
+          )}
+
           {role === "department_staff" && (
             <>
               <h3>{caseItem.title}</h3>
@@ -489,7 +507,7 @@ function CaseRows({ cases, departments, role, onUpdate }) {
               )}
               {caseItem.coordinator_available ? (
                 <details>
-                <summary>Send an update or action request to the Coordinator</summary>
+                <summary>Send an update or action request to the Department Coordinator</summary>
                 <label className="field-group">
                   Request type
                   <select
@@ -509,7 +527,7 @@ function CaseRows({ cases, departments, role, onUpdate }) {
                 <label className="field-group">
                   Message
                   <textarea
-                    aria-label={`Message to Coordinator for case ${caseItem.id}`}
+                    aria-label={`Message to Department Coordinator for case ${caseItem.id}`}
                     minLength={2}
                     maxLength={2000}
                     value={actionForms[caseItem.id]?.message || ""}
@@ -531,7 +549,7 @@ function CaseRows({ cases, departments, role, onUpdate }) {
                   }
                   onClick={() => sendActionRequest(caseItem)}
                 >
-                  {actionLoading[caseItem.id] ? "Sending..." : "Send to Coordinator"}
+                  {actionLoading[caseItem.id] ? "Sending..." : "Send to Department Coordinator"}
                 </button>
                 {actionErrors[caseItem.id] && (
                   <p role="alert" className="field-error">
@@ -540,7 +558,7 @@ function CaseRows({ cases, departments, role, onUpdate }) {
                 )}
                 </details>
               ) : (
-                <p>This case has no assigned Coordinator to contact yet.</p>
+                <p>This case has no assigned Department Coordinator to contact yet.</p>
               )}
               <p>Department staff cannot change the case status or close cases.</p>
             </>
@@ -617,12 +635,15 @@ export default function RoleDashboard() {
   const [cases, setCases] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [actionRequests, setActionRequests] = useState([]);
+  const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const [requestLoading, setRequestLoading] = useState({});
   const [requestError, setRequestError] = useState("");
   const [requestMessage, setRequestMessage] = useState("");
+  const [loadWarnings, setLoadWarnings] = useState([]);
+  const [unreadMessages, setUnreadMessages] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -631,24 +652,58 @@ export default function RoleDashboard() {
       try {
         setLoading(true);
         setError("");
+        setLoadWarnings([]);
         const caseLoader = {
           coordinator: getCoordinatorCases,
           admin: getAdminCases,
           department_staff: getDepartmentCases,
         }[role];
-        const [caseData, departmentData, actionRequestData] = await Promise.all([
-          caseLoader(),
-          role === "admin" || role === "coordinator"
-            ? getAuthorizedDepartments()
-            : Promise.resolve([]),
-          role === "coordinator"
-            ? getCoordinatorActionRequests()
-            : Promise.resolve([]),
-        ]);
+        if (!caseLoader) {
+          throw new Error("Your account does not have a workspace.");
+        }
+        // The case list is essential. Everything else is optional, so a
+        // failure there shows a notice instead of blanking the dashboard.
+        const caseData = await caseLoader();
+        const optional = [
+          {
+            name: "departments",
+            run:
+              role === "admin" || role === "coordinator"
+                ? getAuthorizedDepartments
+                : null,
+          },
+          {
+            name: "department requests",
+            run: role === "coordinator" ? getCoordinatorActionRequests : null,
+          },
+          {
+            name: "tasks",
+            run:
+              role === "coordinator"
+                ? getCoordinatorTasks
+                : role === "admin"
+                  ? getAdminTasks
+                  : null,
+          },
+        ];
+        const settled = await Promise.allSettled(
+          optional.map((item) => (item.run ? item.run() : Promise.resolve([]))),
+        );
         if (!cancelled) {
-          setCases(caseData);
-          setDepartments(departmentData);
-          setActionRequests(actionRequestData);
+          const valueOf = (index) =>
+            settled[index].status === "fulfilled" &&
+            Array.isArray(settled[index].value)
+              ? settled[index].value
+              : [];
+          setCases(Array.isArray(caseData) ? caseData : []);
+          setDepartments(valueOf(0));
+          setActionRequests(valueOf(1));
+          setTasks(valueOf(2));
+          setLoadWarnings(
+            optional
+              .filter((_, index) => settled[index].status === "rejected")
+              .map((item) => item.name),
+          );
         }
       } catch (err) {
         if (!cancelled) {
@@ -670,6 +725,14 @@ export default function RoleDashboard() {
       current.map((item) =>
         item.id === updatedCase.id ? { ...item, ...updatedCase } : item,
       ),
+    );
+  }
+
+  function saveTask(savedTask) {
+    setTasks((current) =>
+      current.some((item) => item.id === savedTask.id)
+        ? current.map((item) => (item.id === savedTask.id ? savedTask : item))
+        : [savedTask, ...current],
     );
   }
 
@@ -713,11 +776,11 @@ export default function RoleDashboard() {
           </h1>
           <p>
             {role === "coordinator" &&
-              "Review the full case details and student identity for cases assigned to you. You alone control case status, closure, and student-visible follow-ups."}
+              "Review the full case details and student identity for cases assigned to you. Assign work to staff in the departments, and control case status, closure, and student-visible follow-ups."}
             {role === "admin" &&
-              "Manage case routing and assignments using redacted case briefs. Administrative access does not include student identity or contact details."}
+              "Receive cases, invite Department Coordinators, and send tasks to departments such as Counselling or Academics using redacted case briefs. This role does not include student identity or contact details."}
             {role === "department_staff" &&
-              `Only cases routed to ${user.department} are listed. This view contains minimum necessary case information.`}
+              `Tasks sent to ${user.department} are listed here. Claim a task from your department's pool or work on the tasks assigned to you. Case details are limited to the minimum necessary information.`}
           </p>
         </div>
       </section>
@@ -738,6 +801,21 @@ export default function RoleDashboard() {
           </div>
         ) : (
           <>
+            {loadWarnings.length > 0 && (
+              <div role="alert" className="workspace-error">
+                <p>
+                  Some information could not be loaded ({loadWarnings.join(", ")}).
+                  The rest of your workspace is available.
+                </p>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setReloadKey((key) => key + 1)}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
             {requestError && <p role="alert" className="field-error">{requestError}</p>}
             {requestMessage && <p role="status" className="role-feedback">{requestMessage}</p>}
             {role === "coordinator" && (
@@ -753,12 +831,23 @@ export default function RoleDashboard() {
                 />
               </section>
             )}
-            <h2>Cases</h2>
+            {role === "department_staff" && (
+              <DepartmentTaskDashboard department={user.department} />
+            )}
+            <MessageCenter cases={cases} onUnreadChange={setUnreadMessages} />
+            {unreadMessages > 0 && (
+              <p role="status" className="role-feedback">
+                You have {unreadMessages} unread message{unreadMessages === 1 ? "" : "s"}.
+              </p>
+            )}
+            <h2>{role === "department_staff" ? "Routed cases" : "Cases"}</h2>
             <CaseRows
               cases={cases}
               departments={departments}
               role={role}
               onUpdate={updateCase}
+              tasks={tasks}
+              onTaskSaved={role === "coordinator" || role === "admin" ? saveTask : undefined}
             />
           </>
         )}

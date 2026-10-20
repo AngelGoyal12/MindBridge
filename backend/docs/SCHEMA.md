@@ -275,6 +275,36 @@ action requests are private and are never included in student case progress.
 Student progress includes submission, assignment, routing, status, follow-up,
 and closure events and is returned only to the case owner.
 
+## Department tasks
+
+A Coordinator assigns concrete work to a department through
+`department_tasks`. Tasks are addressed to a department, not to a case's
+current routing, and department staff only ever see tasks for their own
+provisioned department.
+
+| Table | Purpose |
+| --- | --- |
+| `department_tasks` | `case_id`, `department`, `assigned_by_user_id`, `title`, `instructions`, `priority` (`low`/`normal`/`high`/`urgent`), `due_date`, `status` (`assigned` → `in_progress` → `completed`, or `cancelled`), `started_at`, `completed_at`, `completed_by_user_id`, `completion_note`, `created_at`, `updated_at` |
+| `department_task_events` | Append-only status history: `task_id`, `actor_user_id`, `from_status`, `to_status`, `note`, `created_at` |
+
+Rules enforced by the API:
+
+- Only the Coordinator assigned to the case can create, cancel or reopen its
+  tasks; the department must have a provisioned staff account.
+- Staff may move a task `assigned → in_progress`, `assigned → completed` or
+  `in_progress → completed`. Completion requires a note. Any other transition
+  returns `409`.
+- A case cannot be closed while it has `assigned` or `in_progress` tasks
+  (`409`). Tasks cannot be added to a closed case.
+- Department task responses reuse the consent-aware case view: student
+  identity fields appear only when the student consented, and the task title
+  and instructions are scrubbed of identity values the student did not share.
+- Students see only generic `task` progress updates ("Support task
+  assigned/completed"); instructions and completion notes are never exposed.
+
+Migration: `e5b2c7d1a904_add_department_tasks.py` (revises `a7f19c42d801`).
+Run `alembic upgrade head` against MySQL after pulling this change.
+
 ## Existing schema
 
 The current SQLAlchemy models already include the fields needed for RBAC:
@@ -348,6 +378,11 @@ Remove-Item Env:MINDBRIDGE_TESTING
 | GET | `/api/v1/departments` | Admin or Coordinator; departments of provisioned staff only |
 | PATCH | `/api/v1/cases/{id}/department` | Admin or the assigned Coordinator, provisioned departments only; CSRF required |
 | GET/POST | `/api/v1/department/cases...` | Department staff, routed department only; contact data is consent-gated; action request POST requires CSRF |
+| POST/GET | `/api/v1/coordinator/cases/{id}/tasks` | Assigned Coordinator only; POST assigns a task to a provisioned department, CSRF required |
+| GET | `/api/v1/coordinator/tasks` | Assigned Coordinator only; all tasks on own cases, optional `status` filter |
+| PATCH | `/api/v1/coordinator/tasks/{id}` | Assigned Coordinator only; `cancel` open tasks or `reopen` completed ones (reason required), CSRF required |
+| GET | `/api/v1/department/tasks`, `/tasks/summary`, `/tasks/{id}` | Department staff, own department only; consent-gated identity |
+| PATCH | `/api/v1/department/tasks/{id}/status` | Department staff, own department only; `in_progress` or `completed` (note required), CSRF required |
 | GET | `/api/v1/notifications` | Student, own cases only |
 
 The `/api/v1/cases/{id}` family also includes student-only identity preference,
@@ -358,3 +393,63 @@ consent is active. Unauthorized requests are rejected with `401` when
 unauthenticated and `403` when the authenticated role lacks permission. A
 resource outside the caller's data scope returns `404` where revealing its
 existence would disclose information.
+
+## Role names, staff assignment and internal messaging
+
+### Display names (labels only)
+The stored role values never change. Only the labels people see do:
+
+| Stored role | Shown as | Responsibility |
+| --- | --- | --- |
+| `admin` | Main Coordinator | Receives cases (redacted briefs), invites Department Coordinators by email, sends cases and tasks to departments |
+| `coordinator` | Department Coordinator | Invited by email; sees student identity for assigned cases; assigns tasks to individual staff; follows up and closes the case |
+| `department_staff` | Department Staff | Claim or receive tasks, mark them In Progress / Completed, message other teams |
+
+The email invitation flow is unchanged.
+
+### Task staff assignment (`department_tasks`)
+- `assigned_staff_id` (nullable FK to `users.id`) and `assigned_staff_at`.
+- `NULL` means the task is in the department pool: every staff member of that
+  department sees it and can claim it.
+- Once assigned, only that staff member sees it (plus the coordinators/admin).
+- Working on a pool task (Start work / Complete) claims it implicitly.
+- Only open tasks can be assigned, reassigned or returned to the pool, and only
+  to staff of the task's own department.
+- Assignments and claims are written to `department_task_events` as notes.
+
+| Method | Path | Who |
+| --- | --- | --- |
+| POST | `/api/v1/admin/cases/{case_id}/tasks` | Main Coordinator sends a task to a department (optional `assigned_staff_id`) |
+| GET | `/api/v1/admin/tasks` | Main Coordinator, identity-redacted |
+| PATCH | `/api/v1/admin/tasks/{id}` | Main Coordinator cancel / reopen |
+| PATCH | `/api/v1/admin/tasks/{id}/assignee` | Main Coordinator assigns staff (`staff_id`, or `null` for the pool) |
+| PATCH | `/api/v1/coordinator/tasks/{id}/assignee` | Department Coordinator assigns staff |
+| GET | `/api/v1/department-staff?department=X` | Admin/Coordinator: staff list for the picker |
+| POST | `/api/v1/department/tasks/{id}/claim` | Staff claim a pool task (atomic, first claim wins) |
+
+### Internal messages (`internal_messages`)
+One row per recipient (so each person has their own read state); rows from the
+same send share `group_id`. A message to the Main Coordinator or to a
+department fans out to every member.
+
+| Sender | Can message |
+| --- | --- |
+| Department Staff | Main Coordinator, other departments, coordinators linked to their department (via a routed case or task) |
+| Department Coordinator | Main Coordinator, any department |
+| Main Coordinator | Any Department Coordinator, any department |
+
+Students cannot use messaging. A message may reference a case only if the
+sender can access that case. Text is redacted per reader: the Main Coordinator
+never sees identity or contact details; staff see only the identity fields the
+student consented to share.
+
+| Method | Path |
+| --- | --- |
+| GET | `/api/v1/messages/recipients` |
+| POST | `/api/v1/messages` |
+| GET | `/api/v1/messages/inbox` (`?unread_only=true`) |
+| GET | `/api/v1/messages/sent` |
+| GET | `/api/v1/messages/unread-count` |
+| PATCH | `/api/v1/messages/{id}/read` |
+
+Migration: `f7c3d9e2b615` (after `e5b2c7d1a904`).

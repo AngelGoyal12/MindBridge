@@ -4463,3 +4463,287 @@
     width: 100%;
   }
 }
+
+
+/* ---------------- Department tasks ---------------- */
+
+.task-dashboard {
+  margin-bottom: 40px;
+}
+
+.task-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.task-summary-tile {
+  display: grid;
+  gap: 4px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-paper);
+}
+
+.task-summary-tile strong {
+  font-family: var(--font-heading);
+  font-size: 28px;
+  color: var(--color-green);
+}
+
+.task-summary-tile span {
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.task-summary-tile.alert {
+  border-color: var(--color-coral);
+}
+
+.task-summary-tile.alert strong {
+  color: var(--color-coral);
+}
+
+.task-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.task-filter {
+  padding: 8px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--color-ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.task-filter.active {
+  border-color: var(--color-green);
+  background: var(--color-green);
+  color: #fff;
+}
+
+.task-card .task-title {
+  margin: 8px 0 0;
+}
+
+.task-card h4 {
+  margin: 14px 0 4px;
+  font-size: 14px;
+}
+
+.task-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.priority-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: #eef0ea;
+  color: #4f5a4f;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.priority-high {
+  background: #f4eedb;
+  color: #816d31;
+}
+
+.priority-urgent {
+  background: #f6e1da;
+  color: #a2442a;
+}
+
+.task-status-assigned {
+  background: #eef0ea;
+  color: #4f5a4f;
+}
+
+.task-status-in_progress {
+  background: #f4eedb;
+  color: #816d31;
+}
+
+.task-status-completed {
+  background: #e6eee4;
+  color: #315c40;
+}
+
+.task-status-cancelled {
+  background: #f2e8e2;
+  color: #945c48;
+}
+
+.task-overdue {
+  color: #a2442a;
+  font-weight: 600;
+}
+
+.task-instructions {
+  white-space: pre-wrap;
+}
+
+.task-actions,
+.task-complete-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.task-complete-form .field-group {
+  flex: 1 1 280px;
+  margin-top: 0;
+}
+
+.task-complete-form textarea,
+.case-task-form textarea {
+  min-height: 84px;
+  padding: 9px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font: inherit;
+}
+
+.task-history,
+.task-case-details {
+  margin-top: 12px;
+}
+
+.task-history ol {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.task-history li p {
+  margin: 2px 0 8px;
+}
+
+.case-task-manager {
+  margin-top: 20px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.case-task-list {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.case-task-item {
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.case-task-item p {
+  margin: 6px 0;
+}
+
+.case-task-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.case-task-form form {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.case-task-form summary,
+.task-history summary,
+.task-case-details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.task-form-hint {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .task-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---------- Staff assignment and internal messages ---------- */
+
+.task-assignee {
+  margin: 4px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-green);
+}
+
+.message-center {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.message-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.message-item {
+  padding: 12px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-paper);
+}
+
+.message-item.unread {
+  border-left: 4px solid var(--color-green);
+  background: #fff;
+}
+
+.message-item summary {
+  cursor: pointer;
+}
+
+.message-meta {
+  font-size: 13px;
+  color: var(--color-muted, #5c665f);
+}
+
+.message-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message-form {
+  display: grid;
+  gap: 12px;
+  max-width: 640px;
+}

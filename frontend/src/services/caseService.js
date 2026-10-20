@@ -153,3 +153,126 @@ export function createDepartmentActionRequest(caseId, request) {
     },
   );
 }
+
+// ---------------- Department tasks ----------------
+
+export function createDepartmentTask(caseId, task) {
+  return apiRequest(
+    `/api/v1/coordinator/cases/${encodeURIComponent(caseId)}/tasks`,
+    {
+      method: "POST",
+      body: JSON.stringify(task),
+    },
+  );
+}
+
+export function getCoordinatorTasks() {
+  return apiRequest("/api/v1/coordinator/tasks");
+}
+
+export function reviewDepartmentTask(taskId, action, note) {
+  return apiRequest(
+    `/api/v1/coordinator/tasks/${encodeURIComponent(taskId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ action, ...(note ? { note } : {}) }),
+    },
+  );
+}
+
+export function getDepartmentTasks() {
+  return apiRequest("/api/v1/department/tasks");
+}
+
+export function getDepartmentTaskSummary() {
+  return apiRequest("/api/v1/department/tasks/summary");
+}
+
+export function updateDepartmentTaskStatus(taskId, status, note) {
+  return apiRequest(
+    `/api/v1/department/tasks/${encodeURIComponent(taskId)}/status`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status, ...(note ? { note } : {}) }),
+    },
+  );
+}
+
+// ---------------- Staff assignment, claiming and Main Coordinator tasks ----------------
+
+export function getDepartmentStaff(department) {
+  return apiRequest(
+    `/api/v1/department-staff?department=${encodeURIComponent(department)}`,
+  );
+}
+
+export function assignTaskToStaff(taskId, staffId, { asAdmin = false } = {}) {
+  const base = asAdmin ? "/api/v1/admin/tasks" : "/api/v1/coordinator/tasks";
+  return apiRequest(`${base}/${encodeURIComponent(taskId)}/assignee`, {
+    method: "PATCH",
+    body: JSON.stringify({ staff_id: staffId }),
+  });
+}
+
+export function claimDepartmentTask(taskId) {
+  return apiRequest(
+    `/api/v1/department/tasks/${encodeURIComponent(taskId)}/claim`,
+    { method: "POST" },
+  );
+}
+
+export function createAdminDepartmentTask(caseId, task) {
+  return apiRequest(
+    `/api/v1/admin/cases/${encodeURIComponent(caseId)}/tasks`,
+    {
+      method: "POST",
+      body: JSON.stringify(task),
+    },
+  );
+}
+
+export function getAdminTasks() {
+  return apiRequest("/api/v1/admin/tasks");
+}
+
+export function reviewAdminTask(taskId, action, note) {
+  return apiRequest(
+    `/api/v1/admin/tasks/${encodeURIComponent(taskId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ action, ...(note ? { note } : {}) }),
+    },
+  );
+}
+
+// ---------------- Internal messaging ----------------
+
+export function getMessageRecipients() {
+  return apiRequest("/api/v1/messages/recipients");
+}
+
+export function getMessageInbox() {
+  return apiRequest("/api/v1/messages/inbox");
+}
+
+export function getSentMessages() {
+  return apiRequest("/api/v1/messages/sent");
+}
+
+export function getUnreadMessageCount() {
+  return apiRequest("/api/v1/messages/unread-count");
+}
+
+export function sendInternalMessage(message) {
+  return apiRequest("/api/v1/messages", {
+    method: "POST",
+    body: JSON.stringify(message),
+  });
+}
+
+export function markMessageRead(messageId) {
+  return apiRequest(
+    `/api/v1/messages/${encodeURIComponent(messageId)}/read`,
+    { method: "PATCH" },
+  );
+}

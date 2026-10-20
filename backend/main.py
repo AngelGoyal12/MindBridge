@@ -8,7 +8,8 @@ import secrets
 import smtplib
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+import uuid
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Literal
 
 from fastapi import (
@@ -31,7 +32,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
@@ -429,6 +430,135 @@ class DepartmentActionRequestDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: Literal["handled", "dismissed"]
+
+# ---------------- DEPARTMENT TASK SCHEMAS ----------------
+
+TaskPriority = Literal["low", "normal", "high", "urgent"]
+TASK_OPEN_STATUSES = ("assigned", "in_progress")
+TASK_STATUSES = ("assigned", "in_progress", "completed", "cancelled")
+# Statuses department staff may move a task into, keyed by current status.
+TASK_STAFF_TRANSITIONS = {
+    "assigned": {"in_progress", "completed"},
+    "in_progress": {"completed"},
+}
+# Institution-local calendar day (IST) used for due dates and overdue checks.
+TASK_LOCAL_TZ = timezone(timedelta(hours=5, minutes=30))
+
+
+def task_today() -> date:
+    return datetime.now(TASK_LOCAL_TZ).date()
+
+
+class DepartmentTaskCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    department: str = Field(min_length=2, max_length=100)
+    title: str = Field(min_length=3, max_length=150)
+    instructions: str = Field(min_length=5, max_length=2000)
+    priority: TaskPriority = "normal"
+    due_date: date | None = None
+    # Optional: hand the task straight to one staff member of the department.
+    assigned_staff_id: int | None = Field(default=None, gt=0)
+
+    @field_validator("department", "title", "instructions", mode="before")
+    @classmethod
+    def trim_task_text(cls, value: object) -> object:
+        # Trim before length checks so whitespace-only text is rejected.
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("due_date")
+    @classmethod
+    def due_date_not_in_past(cls, value: date | None) -> date | None:
+        if value is not None and value < task_today():
+            raise ValueError("Due date cannot be in the past.")
+        return value
+
+
+class DepartmentTaskStatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["in_progress", "completed"]
+    note: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("note")
+    @classmethod
+    def trim_task_note(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+    @model_validator(mode="after")
+    def require_completion_note(self):
+        if self.status == "completed" and (
+            self.note is None or len(self.note) < 2
+        ):
+            raise ValueError(
+                "Add a short completion note describing what was done."
+            )
+        return self
+
+
+class CoordinatorTaskDecision(BaseModel):
+    """Coordinator review of a task: cancel it, or reopen a completed one."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["cancel", "reopen"]
+    note: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("note")
+    @classmethod
+    def trim_decision_note(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+    @model_validator(mode="after")
+    def require_reopen_reason(self):
+        if self.action == "reopen" and (
+            self.note is None or len(self.note) < 2
+        ):
+            raise ValueError("Explain what still needs to be done.")
+        return self
+
+
+class TaskAssigneeUpdate(BaseModel):
+    """Hand an open task to one staff member, or return it to the pool."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    staff_id: int | None = Field(default=None, gt=0)
+
+
+class InternalMessageCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recipient_type: Literal["main_coordinator", "coordinator", "department"]
+    recipient_user_id: int | None = Field(default=None, gt=0)
+    recipient_department: str | None = Field(default=None, max_length=100)
+    case_id: int | None = Field(default=None, gt=0)
+    subject: str = Field(min_length=2, max_length=150)
+    body: str = Field(min_length=2, max_length=2000)
+
+    @field_validator("subject", "body", "recipient_department", mode="before")
+    @classmethod
+    def trim_message_text(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def check_recipient_fields(self):
+        if self.recipient_type == "coordinator" and self.recipient_user_id is None:
+            raise ValueError("Choose the coordinator to message.")
+        if self.recipient_type == "department" and not self.recipient_department:
+            raise ValueError("Choose the department to message.")
+        if self.recipient_type != "coordinator":
+            self.recipient_user_id = None
+        if self.recipient_type != "department":
+            self.recipient_department = None
+        return self
+
 
 class ConsentRequest(BaseModel):
     purpose: str = Field(min_length=2, max_length=255)
@@ -1959,6 +2089,17 @@ def update_assigned_case_status(
             detail="Assigned case not found."
         )
 
+    if payload.status == "closed" and case.status != "closed":
+        open_tasks = count_open_tasks(db, case.id)
+        if open_tasks:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{open_tasks} department task(s) are still open. "
+                    "Complete or cancel them before closing this case."
+                ),
+            )
+
     if case.status != payload.status:
         case.status = payload.status
         if payload.status == "closed":
@@ -2179,6 +2320,1253 @@ def create_department_action_request(
     db.commit()
     db.refresh(action_request)
     return student_case_action_request_to_dict(action_request)
+
+
+# ---------------- DEPARTMENT TASKS ----------------
+
+def task_is_overdue(task) -> bool:
+    return (
+        task.due_date is not None
+        and task.status in TASK_OPEN_STATUSES
+        and task.due_date < task_today()
+    )
+
+
+def task_event_to_dict(event, actor_name):
+    return {
+        "id": event.id,
+        "from_status": event.from_status,
+        "to_status": event.to_status,
+        "note": event.note,
+        "actor_name": actor_name,
+        "created_at": event.created_at,
+    }
+
+
+def get_task_events(db: Session, task_id: int):
+    rows = (
+        db.query(models.DepartmentTaskEvent, models.User.name)
+        .join(
+            models.User,
+            models.User.id == models.DepartmentTaskEvent.actor_user_id,
+        )
+        .filter(models.DepartmentTaskEvent.task_id == task_id)
+        .order_by(
+            models.DepartmentTaskEvent.created_at.asc(),
+            models.DepartmentTaskEvent.id.asc(),
+        )
+        .all()
+    )
+    return [task_event_to_dict(event, name) for event, name in rows]
+
+
+def task_base_dict(task):
+    return {
+        "id": task.id,
+        "case_id": task.case_id,
+        "department": task.department,
+        "title": task.title,
+        "instructions": task.instructions,
+        "priority": task.priority,
+        "due_date": task.due_date,
+        "status": task.status,
+        "is_overdue": task_is_overdue(task),
+        "started_at": task.started_at,
+        "completed_at": task.completed_at,
+        "completion_note": task.completion_note,
+        "assigned_staff_id": task.assigned_staff_id,
+        "assigned_staff_at": task.assigned_staff_at,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+    }
+
+
+def _user_name(db: Session, user_id: int | None) -> str | None:
+    if user_id is None:
+        return None
+    return (
+        db.query(models.User.name).filter(models.User.id == user_id).scalar()
+    )
+
+
+def coordinator_task_to_dict(db: Session, task):
+    data = task_base_dict(task)
+    data["assigned_staff_name"] = _user_name(db, task.assigned_staff_id)
+    data["events"] = get_task_events(db, task.id)
+    return data
+
+
+def admin_task_to_dict(db: Session, task):
+    """Main Coordinator view: free text is redacted like the case briefs."""
+    case = db.query(models.Case).filter(models.Case.id == task.case_id).first()
+    student = None
+    if case is not None and case.student_id is not None:
+        student = (
+            db.query(models.User)
+            .filter(models.User.id == case.student_id)
+            .first()
+        )
+    data = coordinator_task_to_dict(db, task)
+    data["title"] = redact_admin_content(data["title"], student)
+    data["instructions"] = redact_admin_content(data["instructions"], student)
+    if data["completion_note"]:
+        data["completion_note"] = redact_admin_content(
+            data["completion_note"], student
+        )
+    for event in data["events"]:
+        if event["note"]:
+            event["note"] = redact_admin_content(event["note"], student)
+    return data
+
+
+def department_task_to_dict(db: Session, task, include_case=True, viewer=None):
+    """Need-to-know view: identity is limited to what the student consented to,
+    and free text written by the Coordinator is scrubbed of other identifiers."""
+    case = db.query(models.Case).filter(models.Case.id == task.case_id).first()
+    data = task_base_dict(task)
+    data["assigned_staff_name"] = _user_name(db, task.assigned_staff_id)
+    data["assigned_to_me"] = (
+        viewer is not None and task.assigned_staff_id == viewer.id
+    )
+    data["events"] = get_task_events(db, task.id)
+    if case is None:
+        return data
+    student = (
+        db.query(models.User)
+        .filter(models.User.id == case.student_id)
+        .first()
+    )
+    case_view = department_case_to_dict(db, case)
+    if student is not None:
+        allowed = (
+            set(case_view["department_consent"]["fields"])
+            if case_view["department_identity_consent"]
+            else set()
+        )
+        data["title"] = redact_unselected_student_identity(
+            data["title"], student, allowed
+        )
+        data["instructions"] = redact_unselected_student_identity(
+            data["instructions"], student, allowed
+        )
+    if include_case:
+        data["case"] = case_view
+    return data
+
+
+def _canonical_department(db: Session, name: str) -> str | None:
+    wanted = name.strip().casefold()
+    return next(
+        (
+            department
+            for department in get_provisioned_departments(db)
+            if department.casefold() == wanted
+        ),
+        None,
+    )
+
+
+def _get_coordinator_case(db: Session, case_id: int, coordinator):
+    case = (
+        db.query(models.Case)
+        .filter(
+            models.Case.id == case_id,
+            models.Case.assigned_coordinator_id == coordinator.id,
+        )
+        .first()
+    )
+    if case is None:
+        raise HTTPException(status_code=404, detail="Assigned case not found.")
+    return case
+
+
+def _get_coordinator_task(db: Session, task_id: int, coordinator):
+    task = (
+        db.query(models.DepartmentTask)
+        .join(
+            models.Case,
+            models.Case.id == models.DepartmentTask.case_id,
+        )
+        .filter(
+            models.DepartmentTask.id == task_id,
+            models.Case.assigned_coordinator_id == coordinator.id,
+        )
+        .first()
+    )
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    return task
+
+
+def _require_staff_department(staff) -> str:
+    department = (staff.department or "").strip()
+    if not department:
+        raise HTTPException(
+            status_code=403,
+            detail="This account has no provisioned department.",
+        )
+    return department
+
+
+def _staff_task_filter(staff):
+    """Tasks a staff member may see: their own plus the unclaimed pool."""
+    return or_(
+        models.DepartmentTask.assigned_staff_id.is_(None),
+        models.DepartmentTask.assigned_staff_id == staff.id,
+    )
+
+
+def _department_staff_users(db: Session, department: str):
+    wanted = (department or "").strip().casefold()
+    users = (
+        db.query(models.User)
+        .filter(
+            models.User.role == Role.DEPARTMENT_STAFF.value,
+            models.User.department.is_not(None),
+        )
+        .order_by(func.lower(models.User.name), models.User.id)
+        .all()
+    )
+    return [
+        user for user in users
+        if (user.department or "").strip().casefold() == wanted
+    ]
+
+
+def _get_department_task(db: Session, task_id: int, staff):
+    department = _require_staff_department(staff)
+    task = (
+        db.query(models.DepartmentTask)
+        .filter(
+            models.DepartmentTask.id == task_id,
+            models.DepartmentTask.department == department,
+            _staff_task_filter(staff),
+        )
+        .first()
+    )
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    return task
+
+
+def _record_task_event(db, task, actor, from_status, to_status, note=None):
+    db.add(
+        models.DepartmentTaskEvent(
+            task_id=task.id,
+            actor_user_id=actor.id,
+            from_status=from_status,
+            to_status=to_status,
+            note=note,
+        )
+    )
+
+
+def _student_task_update(db, case, author, title, message):
+    # Student-visible text is deliberately generic: it never repeats the
+    # Coordinator's instructions or the department's notes.
+    db.add(
+        models.CaseProgressUpdate(
+            case_id=case.id,
+            author_user_id=author.id,
+            update_type="task",
+            title=title,
+            message=message,
+        )
+    )
+
+
+def count_open_tasks(db: Session, case_id: int) -> int:
+    return (
+        db.query(func.count(models.DepartmentTask.id))
+        .filter(
+            models.DepartmentTask.case_id == case_id,
+            models.DepartmentTask.status.in_(TASK_OPEN_STATUSES),
+        )
+        .scalar()
+        or 0
+    )
+
+
+def _set_task_assignee(db: Session, task, staff_id: int | None, actor) -> bool:
+    """Assign an open task to one staff member of its department, or return
+    it to the department pool. Returns True when something changed."""
+    if task.status not in TASK_OPEN_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="Only open tasks can be assigned to a staff member.",
+        )
+    if staff_id is None:
+        if task.assigned_staff_id is None:
+            return False
+        task.assigned_staff_id = None
+        task.assigned_staff_at = None
+        _record_task_event(
+            db, task, actor, task.status, task.status,
+            "Returned to the department pool.",
+        )
+        return True
+
+    staff = next(
+        (
+            user for user in _department_staff_users(db, task.department)
+            if user.id == staff_id
+        ),
+        None,
+    )
+    if staff is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Choose a staff member who works in {task.department}.",
+        )
+    if task.assigned_staff_id == staff.id:
+        return False
+    task.assigned_staff_id = staff.id
+    task.assigned_staff_at = datetime.now(timezone.utc)
+    _record_task_event(
+        db, task, actor, task.status, task.status,
+        f"Assigned to {staff.name}.",
+    )
+    return True
+
+
+def _create_task_for_case(db: Session, case, payload, actor):
+    if case.status == "closed":
+        raise HTTPException(
+            status_code=409,
+            detail="Tasks cannot be added to a closed case.",
+        )
+    department = _canonical_department(db, payload.department)
+    if department is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Department must have a provisioned department staff account.",
+        )
+
+    task = models.DepartmentTask(
+        case_id=case.id,
+        department=department,
+        assigned_by_user_id=actor.id,
+        title=payload.title,
+        instructions=payload.instructions,
+        priority=payload.priority,
+        due_date=payload.due_date,
+        status="assigned",
+    )
+    db.add(task)
+    db.flush()
+    _record_task_event(db, task, actor, None, "assigned")
+    if payload.assigned_staff_id is not None:
+        _set_task_assignee(db, task, payload.assigned_staff_id, actor)
+    _student_task_update(
+        db,
+        case,
+        actor,
+        "Support task assigned",
+        f"A support task was assigned to {department}.",
+    )
+    return task
+
+
+@app.post("/api/v1/coordinator/cases/{case_id}/tasks", status_code=201)
+def create_department_task(
+    case_id: int,
+    payload: DepartmentTaskCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_roles(Role.COORDINATOR.value)
+    ),
+    _: None = Depends(require_csrf_token),
+):
+    case = _get_coordinator_case(db, case_id, current_user)
+    task = _create_task_for_case(db, case, payload, current_user)
+    db.commit()
+    db.refresh(task)
+    return {
+        "message": "Task assigned to department.",
+        "task": coordinator_task_to_dict(db, task),
+    }
+
+
+@app.post("/api/v1/admin/cases/{case_id}/tasks", status_code=201)
+def admin_create_department_task(
+    case_id: int,
+    payload: DepartmentTaskCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles(Role.ADMIN.value)),
+    _: None = Depends(require_csrf_token),
+):
+    """The Main Coordinator sends a task to a department for any case."""
+    case = db.query(models.Case).filter(models.Case.id == case_id).first()
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found.")
+    task = _create_task_for_case(db, case, payload, current_user)
+    db.commit()
+    db.refresh(task)
+    return {
+        "message": "Task sent to department.",
+        "task": admin_task_to_dict(db, task),
+    }
+
+
+@app.get("/api/v1/coordinator/cases/{case_id}/tasks")
+def get_case_tasks(
+    case_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_roles(Role.COORDINATOR.value)
+    ),
+):
+    case = _get_coordinator_case(db, case_id, current_user)
+    tasks = (
+        db.query(models.DepartmentTask)
+        .filter(models.DepartmentTask.case_id == case.id)
+        .order_by(
+            models.DepartmentTask.created_at.desc(),
+            models.DepartmentTask.id.desc(),
+        )
+        .all()
+    )
+    return [coordinator_task_to_dict(db, task) for task in tasks]
+
+
+@app.get("/api/v1/coordinator/tasks")
+def get_coordinator_tasks(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=200),
+    status: Optional[Literal[
+        "assigned", "in_progress", "completed", "cancelled"
+    ]] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_roles(Role.COORDINATOR.value)
+    ),
+):
+    query = (
+        db.query(models.DepartmentTask)
+        .join(
+            models.Case,
+            models.Case.id == models.DepartmentTask.case_id,
+        )
+        .filter(models.Case.assigned_coordinator_id == current_user.id)
+    )
+    if status is not None:
+        query = query.filter(models.DepartmentTask.status == status)
+    tasks = (
+        query.order_by(
+            models.DepartmentTask.created_at.desc(),
+            models.DepartmentTask.id.desc(),
+        )
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return [coordinator_task_to_dict(db, task) for task in tasks]
+
+
+def _apply_task_review(db: Session, task, payload, actor) -> None:
+    previous = task.status
+
+    if payload.action == "cancel":
+        if previous not in TASK_OPEN_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail="Only open tasks can be cancelled.",
+            )
+        task.status = "cancelled"
+    else:
+        if previous != "completed":
+            raise HTTPException(
+                status_code=409,
+                detail="Only completed tasks can be reopened.",
+            )
+        case = (
+            db.query(models.Case)
+            .filter(models.Case.id == task.case_id)
+            .first()
+        )
+        if case is not None and case.status == "closed":
+            raise HTTPException(
+                status_code=409,
+                detail="Tasks on a closed case cannot be reopened.",
+            )
+        task.status = "assigned"
+        task.started_at = None
+        task.completed_at = None
+        task.completed_by_user_id = None
+        task.completion_note = None
+
+    _record_task_event(db, task, actor, previous, task.status, payload.note)
+
+
+@app.patch("/api/v1/coordinator/tasks/{task_id}")
+def review_department_task(
+    task_id: int,
+    payload: CoordinatorTaskDecision,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_roles(Role.COORDINATOR.value)
+    ),
+    _: None = Depends(require_csrf_token),
+):
+    task = _get_coordinator_task(db, task_id, current_user)
+    _apply_task_review(db, task, payload, current_user)
+    db.commit()
+    db.refresh(task)
+    return {
+        "message": "Task updated.",
+        "task": coordinator_task_to_dict(db, task),
+    }
+
+
+@app.patch("/api/v1/coordinator/tasks/{task_id}/assignee")
+def assign_task_to_staff(
+    task_id: int,
+    payload: TaskAssigneeUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_roles(Role.COORDINATOR.value)
+    ),
+    _: None = Depends(require_csrf_token),
+):
+    """The Department Coordinator hands a task to one staff member."""
+    task = _get_coordinator_task(db, task_id, current_user)
+    _set_task_assignee(db, task, payload.staff_id, current_user)
+    db.commit()
+    db.refresh(task)
+    return {
+        "message": "Task assignment updated.",
+        "task": coordinator_task_to_dict(db, task),
+    }
+
+
+@app.get("/api/v1/department-staff")
+def get_department_staff(
+    department: str = Query(min_length=2, max_length=100),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(
+        require_roles(Role.ADMIN.value, Role.COORDINATOR.value)
+    ),
+):
+    canonical = _canonical_department(db, department)
+    if canonical is None:
+        raise HTTPException(status_code=404, detail="Department not found.")
+    return [
+        {"id": user.id, "name": user.name, "email": user.email}
+        for user in _department_staff_users(db, canonical)
+    ]
+
+
+# ---- Main Coordinator (admin) task oversight ----
+
+def _get_admin_task(db: Session, task_id: int):
+    task = (
+        db.query(models.DepartmentTask)
+        .filter(models.DepartmentTask.id == task_id)
+        .first()
+    )
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    return task
+
+
+@app.get("/api/v1/admin/tasks")
+def get_admin_tasks(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=200),
+    status: Optional[Literal[
+        "assigned", "in_progress", "completed", "cancelled"
+    ]] = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_roles(Role.ADMIN.value)),
+):
+    query = db.query(models.DepartmentTask)
+    if status is not None:
+        query = query.filter(models.DepartmentTask.status == status)
+    tasks = (
+        query.order_by(
+            models.DepartmentTask.created_at.desc(),
+            models.DepartmentTask.id.desc(),
+        )
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return [admin_task_to_dict(db, task) for task in tasks]
+
+
+@app.patch("/api/v1/admin/tasks/{task_id}")
+def admin_review_department_task(
+    task_id: int,
+    payload: CoordinatorTaskDecision,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles(Role.ADMIN.value)),
+    _: None = Depends(require_csrf_token),
+):
+    task = _get_admin_task(db, task_id)
+    _apply_task_review(db, task, payload, current_user)
+    db.commit()
+    db.refresh(task)
+    return {"message": "Task updated.", "task": admin_task_to_dict(db, task)}
+
+
+@app.patch("/api/v1/admin/tasks/{task_id}/assignee")
+def admin_assign_task_to_staff(
+    task_id: int,
+    payload: TaskAssigneeUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles(Role.ADMIN.value)),
+    _: None = Depends(require_csrf_token),
+):
+    task = _get_admin_task(db, task_id)
+    _set_task_assignee(db, task, payload.staff_id, current_user)
+    db.commit()
+    db.refresh(task)
+    return {
+        "message": "Task assignment updated.",
+        "task": admin_task_to_dict(db, task),
+    }
+
+
+@app.get("/api/v1/department/tasks/summary")
+def get_department_task_summary(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_roles(Role.DEPARTMENT_STAFF.value)
+    ),
+):
+    department = _require_staff_department(current_user)
+    tasks = (
+        db.query(models.DepartmentTask)
+        .filter(
+            models.DepartmentTask.department == department,
+            _staff_task_filter(current_user),
+        )
+        .all()
+    )
+    summary = {status: 0 for status in TASK_STATUSES}
+    for task in tasks:
+        summary[task.status] = summary.get(task.status, 0) + 1
+    summary["overdue"] = sum(1 for task in tasks if task_is_overdue(task))
+    summary["total"] = len(tasks)
+    open_tasks = [task for task in tasks if task.status in TASK_OPEN_STATUSES]
+    summary["mine"] = sum(
+        1 for task in open_tasks if task.assigned_staff_id == current_user.id
+    )
+    summary["unassigned"] = sum(
+        1 for task in open_tasks if task.assigned_staff_id is None
+    )
+    return summary
+
+
+@app.get("/api/v1/department/tasks")
+def get_department_tasks(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=200),
+    status: Optional[Literal[
+        "assigned", "in_progress", "completed", "cancelled"
+    ]] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_roles(Role.DEPARTMENT_STAFF.value)
+    ),
+):
+    department = _require_staff_department(current_user)
+    query = db.query(models.DepartmentTask).filter(
+        models.DepartmentTask.department == department,
+        _staff_task_filter(current_user),
+    )
+    if status is not None:
+        query = query.filter(models.DepartmentTask.status == status)
+    tasks = (
+        query.order_by(
+            models.DepartmentTask.created_at.desc(),
+            models.DepartmentTask.id.desc(),
+        )
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return [
+        department_task_to_dict(db, task, viewer=current_user)
+        for task in tasks
+    ]
+
+
+@app.get("/api/v1/department/tasks/{task_id}")
+def get_department_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_roles(Role.DEPARTMENT_STAFF.value)
+    ),
+):
+    task = _get_department_task(db, task_id, current_user)
+    return department_task_to_dict(db, task, viewer=current_user)
+
+
+@app.patch("/api/v1/department/tasks/{task_id}/status")
+def update_department_task_status(
+    task_id: int,
+    payload: DepartmentTaskStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_roles(Role.DEPARTMENT_STAFF.value)
+    ),
+    _: None = Depends(require_csrf_token),
+):
+    task = _get_department_task(db, task_id, current_user)
+    previous = task.status
+    if payload.status not in TASK_STAFF_TRANSITIONS.get(previous, set()):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"A task that is {previous.replace('_', ' ')} cannot be "
+                f"marked {payload.status.replace('_', ' ')}."
+            ),
+        )
+
+    now = datetime.now(timezone.utc)
+    if task.assigned_staff_id is None:
+        # Working on a pool task makes it yours.
+        task.assigned_staff_id = current_user.id
+        task.assigned_staff_at = now
+    task.status = payload.status
+    if payload.status == "in_progress":
+        task.started_at = now
+    else:
+        if task.started_at is None:
+            task.started_at = now
+        task.completed_at = now
+        task.completed_by_user_id = current_user.id
+        task.completion_note = payload.note
+    _record_task_event(
+        db, task, current_user, previous, payload.status, payload.note
+    )
+
+    if payload.status == "completed":
+        case = (
+            db.query(models.Case)
+            .filter(models.Case.id == task.case_id)
+            .first()
+        )
+        if case is not None:
+            _student_task_update(
+                db,
+                case,
+                current_user,
+                "Support task completed",
+                f"{task.department} completed a support task.",
+            )
+    db.commit()
+    db.refresh(task)
+    return {
+        "message": "Task status updated.",
+        "task": department_task_to_dict(db, task, viewer=current_user),
+    }
+
+
+@app.post("/api/v1/department/tasks/{task_id}/claim")
+def claim_department_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_roles(Role.DEPARTMENT_STAFF.value)
+    ),
+    _: None = Depends(require_csrf_token),
+):
+    """Take an unassigned task from the department pool."""
+    task = _get_department_task(db, task_id, current_user)
+    if task.status not in TASK_OPEN_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="Only open tasks can be claimed.",
+        )
+    if task.assigned_staff_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This task is already assigned to you."
+            if task.assigned_staff_id == current_user.id
+            else "This task has already been claimed.",
+        )
+    now = datetime.now(timezone.utc)
+    # Conditional update so two staff members cannot both win a claim.
+    claimed = (
+        db.query(models.DepartmentTask)
+        .filter(
+            models.DepartmentTask.id == task.id,
+            models.DepartmentTask.assigned_staff_id.is_(None),
+            models.DepartmentTask.status.in_(TASK_OPEN_STATUSES),
+        )
+        .update(
+            {
+                "assigned_staff_id": current_user.id,
+                "assigned_staff_at": now,
+            },
+            synchronize_session=False,
+        )
+    )
+    if claimed != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This task has just been claimed by someone else.",
+        )
+    db.refresh(task)
+    _record_task_event(
+        db, task, current_user, task.status, task.status,
+        f"Claimed by {current_user.name}.",
+    )
+    db.commit()
+    db.refresh(task)
+    return {
+        "message": "Task claimed.",
+        "task": department_task_to_dict(db, task, viewer=current_user),
+    }
+
+
+# ---------------- INTERNAL MESSAGING ----------------
+# Main Coordinator (admin), Department Coordinators (coordinator) and
+# department staff can message each other. Students never use this inbox.
+
+MESSAGE_ROLES = (
+    Role.ADMIN.value,
+    Role.COORDINATOR.value,
+    Role.DEPARTMENT_STAFF.value,
+)
+ROLE_LABELS = {
+    Role.ADMIN.value: "Main Coordinator",
+    Role.COORDINATOR.value: "Department Coordinator",
+    Role.DEPARTMENT_STAFF.value: "Department Staff",
+    Role.STUDENT.value: "Student",
+}
+MAIN_COORDINATOR_LABEL = "Main Coordinator"
+
+
+def _admin_users(db: Session):
+    return (
+        db.query(models.User)
+        .filter(models.User.role == Role.ADMIN.value)
+        .order_by(models.User.id)
+        .all()
+    )
+
+
+def _user_can_view_case(db: Session, user, case) -> bool:
+    if user.role == Role.ADMIN.value:
+        return True
+    if user.role == Role.COORDINATOR.value:
+        return case.assigned_coordinator_id == user.id
+    if user.role == Role.DEPARTMENT_STAFF.value:
+        department = (user.department or "").strip()
+        if not department:
+            return False
+        if case.department == department:
+            return True
+        return (
+            db.query(models.DepartmentTask.id)
+            .filter(
+                models.DepartmentTask.case_id == case.id,
+                models.DepartmentTask.department == department,
+            )
+            .first()
+            is not None
+        )
+    return False
+
+
+def _messageable_coordinators(db: Session, sender):
+    if sender.role == Role.ADMIN.value:
+        users = (
+            db.query(models.User)
+            .filter(models.User.role == Role.COORDINATOR.value)
+            .order_by(func.lower(models.User.name), models.User.id)
+            .all()
+        )
+        return users
+    if sender.role != Role.DEPARTMENT_STAFF.value:
+        return []
+    department = (sender.department or "").strip()
+    routed = (
+        db.query(models.Case.assigned_coordinator_id)
+        .filter(
+            models.Case.department == department,
+            models.Case.assigned_coordinator_id.is_not(None),
+        )
+        .all()
+    )
+    tasked = (
+        db.query(models.Case.assigned_coordinator_id)
+        .join(
+            models.DepartmentTask,
+            models.DepartmentTask.case_id == models.Case.id,
+        )
+        .filter(
+            models.DepartmentTask.department == department,
+            models.Case.assigned_coordinator_id.is_not(None),
+        )
+        .all()
+    )
+    coordinator_ids = {row[0] for row in routed} | {row[0] for row in tasked}
+    if not coordinator_ids:
+        return []
+    return (
+        db.query(models.User)
+        .filter(
+            models.User.id.in_(coordinator_ids),
+            models.User.role == Role.COORDINATOR.value,
+        )
+        .order_by(func.lower(models.User.name), models.User.id)
+        .all()
+    )
+
+
+def _messageable_departments(db: Session, sender) -> list[str]:
+    departments = get_provisioned_departments(db)
+    if sender.role == Role.DEPARTMENT_STAFF.value:
+        own = (sender.department or "").strip().casefold()
+        departments = [
+            name for name in departments if name.casefold() != own
+        ]
+    return departments
+
+
+def _message_targets(db: Session, sender) -> dict:
+    return {
+        "main_coordinator": sender.role
+        in (Role.COORDINATOR.value, Role.DEPARTMENT_STAFF.value),
+        "coordinators": _messageable_coordinators(db, sender),
+        "departments": _messageable_departments(db, sender),
+    }
+
+
+@app.get("/api/v1/messages/recipients")
+def get_message_recipients(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles(*MESSAGE_ROLES)),
+):
+    targets = _message_targets(db, current_user)
+    return {
+        "main_coordinator": targets["main_coordinator"],
+        "coordinators": [
+            {"id": user.id, "name": user.name}
+            for user in targets["coordinators"]
+        ],
+        "departments": targets["departments"],
+    }
+
+
+def _message_reply_target(sender, viewer):
+    """Where a Reply button should send its answer (validated again on send)."""
+    if sender.id == viewer.id:
+        return None
+    if sender.role == Role.ADMIN.value:
+        return {
+            "recipient_type": "main_coordinator",
+            "label": MAIN_COORDINATOR_LABEL,
+        }
+    if sender.role == Role.COORDINATOR.value:
+        return {
+            "recipient_type": "coordinator",
+            "recipient_user_id": sender.id,
+            "label": sender.name,
+        }
+    department = (sender.department or "").strip()
+    if not department:
+        return None
+    return {
+        "recipient_type": "department",
+        "recipient_department": department,
+        "label": department,
+    }
+
+
+def _redact_message_text(db: Session, text: str, viewer, case, student) -> str:
+    if viewer.role == Role.ADMIN.value:
+        return redact_admin_content(text, student)
+    if (
+        viewer.role == Role.DEPARTMENT_STAFF.value
+        and case is not None
+        and student is not None
+    ):
+        consent = department_consent_to_dict(db, case)
+        allowed = set(consent["fields"]) if consent["active"] else set()
+        return redact_unselected_student_identity(text, student, allowed)
+    return text
+
+
+def _serialize_inbox_messages(db: Session, rows, viewer):
+    if not rows:
+        return []
+    user_ids = {row.sender_user_id for row in rows}
+    users = {
+        user.id: user
+        for user in db.query(models.User)
+        .filter(models.User.id.in_(user_ids))
+        .all()
+    }
+    case_ids = {row.case_id for row in rows if row.case_id is not None}
+    cases = (
+        {
+            case.id: case
+            for case in db.query(models.Case)
+            .filter(models.Case.id.in_(case_ids))
+            .all()
+        }
+        if case_ids
+        else {}
+    )
+    students = {}
+    for case in cases.values():
+        if case.student_id is not None and case.student_id not in students:
+            students[case.student_id] = (
+                db.query(models.User)
+                .filter(models.User.id == case.student_id)
+                .first()
+            )
+
+    result = []
+    for row in rows:
+        sender = users.get(row.sender_user_id)
+        case = cases.get(row.case_id) if row.case_id is not None else None
+        student = students.get(case.student_id) if case is not None else None
+        case_title = None
+        if case is not None and _user_can_view_case(db, viewer, case):
+            case_title = _redact_message_text(
+                db, case.title, viewer, case, student
+            )
+        result.append(
+            {
+                "id": row.id,
+                "group_id": row.group_id,
+                "sender_id": row.sender_user_id,
+                "sender_name": sender.name if sender else "Unknown sender",
+                "sender_role": sender.role if sender else None,
+                "sender_role_label": (
+                    ROLE_LABELS.get(sender.role, sender.role)
+                    if sender
+                    else None
+                ),
+                "sender_department": (
+                    (sender.department or None)
+                    if sender is not None
+                    and sender.role == Role.DEPARTMENT_STAFF.value
+                    else None
+                ),
+                "audience_label": row.audience_label,
+                "case_id": row.case_id,
+                "case_title": case_title,
+                "subject": _redact_message_text(
+                    db, row.subject, viewer, case, student
+                ),
+                "body": _redact_message_text(
+                    db, row.body, viewer, case, student
+                ),
+                "read": row.read_at is not None,
+                "read_at": row.read_at,
+                "created_at": row.created_at,
+                "reply_target": (
+                    _message_reply_target(sender, viewer)
+                    if sender is not None
+                    else None
+                ),
+            }
+        )
+    return result
+
+
+@app.post("/api/v1/messages", status_code=201)
+def send_internal_message(
+    payload: InternalMessageCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles(*MESSAGE_ROLES)),
+    _: None = Depends(require_csrf_token),
+):
+    targets = _message_targets(db, current_user)
+
+    if payload.recipient_type == "main_coordinator":
+        if not targets["main_coordinator"]:
+            raise HTTPException(
+                status_code=403,
+                detail="You cannot message the Main Coordinator.",
+            )
+        recipients = [
+            user for user in _admin_users(db) if user.id != current_user.id
+        ]
+        audience = MAIN_COORDINATOR_LABEL
+    elif payload.recipient_type == "coordinator":
+        recipient = next(
+            (
+                user for user in targets["coordinators"]
+                if user.id == payload.recipient_user_id
+            ),
+            None,
+        )
+        if recipient is None:
+            raise HTTPException(
+                status_code=403,
+                detail="That coordinator is not available for you to message.",
+            )
+        recipients = [recipient]
+        audience = f"{recipient.name} (Department Coordinator)"
+    else:
+        wanted = (payload.recipient_department or "").casefold()
+        department = next(
+            (
+                name for name in targets["departments"]
+                if name.casefold() == wanted
+            ),
+            None,
+        )
+        if department is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Choose another provisioned department to message.",
+            )
+        recipients = [
+            user
+            for user in _department_staff_users(db, department)
+            if user.id != current_user.id
+        ]
+        audience = department
+
+    if not recipients:
+        raise HTTPException(
+            status_code=409,
+            detail="There is nobody to receive this message yet.",
+        )
+
+    if payload.case_id is not None:
+        case = (
+            db.query(models.Case)
+            .filter(models.Case.id == payload.case_id)
+            .first()
+        )
+        if case is None or not _user_can_view_case(db, current_user, case):
+            raise HTTPException(status_code=404, detail="Case not found.")
+
+    group_id = str(uuid.uuid4())
+    for recipient in recipients:
+        db.add(
+            models.InternalMessage(
+                group_id=group_id,
+                sender_user_id=current_user.id,
+                recipient_user_id=recipient.id,
+                audience_label=audience,
+                case_id=payload.case_id,
+                subject=payload.subject,
+                body=payload.body,
+            )
+        )
+    db.commit()
+    return {
+        "message": f"Message sent to {audience}.",
+        "group_id": group_id,
+        "recipient_count": len(recipients),
+    }
+
+
+@app.get("/api/v1/messages/inbox")
+def get_message_inbox(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    unread_only: bool = False,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles(*MESSAGE_ROLES)),
+):
+    query = db.query(models.InternalMessage).filter(
+        models.InternalMessage.recipient_user_id == current_user.id
+    )
+    if unread_only:
+        query = query.filter(models.InternalMessage.read_at.is_(None))
+    rows = (
+        query.order_by(
+            models.InternalMessage.created_at.desc(),
+            models.InternalMessage.id.desc(),
+        )
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return _serialize_inbox_messages(db, rows, current_user)
+
+
+@app.get("/api/v1/messages/unread-count")
+def get_unread_message_count(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles(*MESSAGE_ROLES)),
+):
+    unread = (
+        db.query(func.count(models.InternalMessage.id))
+        .filter(
+            models.InternalMessage.recipient_user_id == current_user.id,
+            models.InternalMessage.read_at.is_(None),
+        )
+        .scalar()
+        or 0
+    )
+    return {"unread": unread}
+
+
+@app.get("/api/v1/messages/sent")
+def get_sent_messages(
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles(*MESSAGE_ROLES)),
+):
+    rows = (
+        db.query(models.InternalMessage)
+        .filter(models.InternalMessage.sender_user_id == current_user.id)
+        .order_by(
+            models.InternalMessage.created_at.desc(),
+            models.InternalMessage.id.desc(),
+        )
+        .limit(500)
+        .all()
+    )
+    groups: dict[str, dict] = {}
+    for row in rows:
+        group = groups.get(row.group_id)
+        if group is None:
+            if len(groups) >= limit:
+                continue
+            group = groups[row.group_id] = {
+                "group_id": row.group_id,
+                "audience_label": row.audience_label,
+                "case_id": row.case_id,
+                "subject": row.subject,
+                "body": row.body,
+                "created_at": row.created_at,
+                "recipient_count": 0,
+                "read_count": 0,
+            }
+        group["recipient_count"] += 1
+        if row.read_at is not None:
+            group["read_count"] += 1
+    return list(groups.values())
+
+
+@app.patch("/api/v1/messages/{message_id}/read")
+def mark_message_read(
+    message_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles(*MESSAGE_ROLES)),
+    _: None = Depends(require_csrf_token),
+):
+    message = (
+        db.query(models.InternalMessage)
+        .filter(
+            models.InternalMessage.id == message_id,
+            models.InternalMessage.recipient_user_id == current_user.id,
+        )
+        .first()
+    )
+    if message is None:
+        raise HTTPException(status_code=404, detail="Message not found.")
+    if message.read_at is None:
+        message.read_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(message)
+    return {"id": message.id, "read": True, "read_at": message.read_at}
 
 
 @app.get("/api/v1/notifications")
