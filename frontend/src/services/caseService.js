@@ -64,22 +64,39 @@ export function getCoordinatorCases() {
   return apiRequest("/api/v1/coordinator/cases");
 }
 
-export function updateCoordinatorCaseStatus(caseId, status) {
+export function updateCoordinatorCaseStatus(caseId, status, closureOutcome) {
   return apiRequest(
     `/api/v1/coordinator/cases/${encodeURIComponent(caseId)}/status`,
     {
       method: "PATCH",
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({
+        status,
+        ...(closureOutcome ? { closure_outcome: closureOutcome } : {}),
+      }),
     },
   );
 }
 
-export function requestCoordinatorIdentityDisclosure(caseId, consentDetails) {
+export function createCoordinatorProgressUpdate(caseId, update) {
   return apiRequest(
-    `/api/v1/coordinator/cases/${encodeURIComponent(caseId)}/identity-disclosure`,
+    `/api/v1/coordinator/cases/${encodeURIComponent(caseId)}/updates`,
     {
       method: "POST",
-      body: JSON.stringify(consentDetails),
+      body: JSON.stringify(update),
+    },
+  );
+}
+
+export function getCoordinatorActionRequests() {
+  return apiRequest("/api/v1/coordinator/action-requests");
+}
+
+export function decideCoordinatorActionRequest(requestId, status) {
+  return apiRequest(
+    `/api/v1/coordinator/action-requests/${encodeURIComponent(requestId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
     },
   );
 }
@@ -125,4 +142,14 @@ export function getAuthorizedDepartments() {
 
 export function getDepartmentCases() {
   return apiRequest("/api/v1/department/cases");
+}
+
+export function createDepartmentActionRequest(caseId, request) {
+  return apiRequest(
+    `/api/v1/department/cases/${encodeURIComponent(caseId)}/action-requests`,
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
 }

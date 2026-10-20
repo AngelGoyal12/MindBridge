@@ -1,5 +1,3 @@
-
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Bell,
@@ -8,120 +6,40 @@ import {
   MessageCircle,
   ShieldCheck,
 } from "lucide-react";
-import { getMyNotifications } from "../services/authService";
 
-const STORAGE_KEY = "mindbridge_notifications_read";
+import { useNotifications } from "../context/notificationContext";
+import { statusTimestamp } from "../services/casePresentation";
 
-function readReadStatus() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-  } catch {
-    return {};
-  }
-}
-
-function getDateParts(dateValue) {
-  if (!dateValue) {
-    return { date: "Date unavailable", time: "" };
-  }
-
-  const date = new Date(dateValue);
-
-  if (Number.isNaN(date.getTime())) {
-    return { date: "Date unavailable", time: "" };
-  }
-
-  return {
-    date: date.toLocaleDateString("en-IN", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    }),
-    time: date.toLocaleTimeString("en-IN", {
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
-  };
-}
-
-function createNotifications(items, readStatus) {
-  return items
-    .map((item) => {
-      const id = item.id;
-      const { date, time } = getDateParts(
-        item.created_at
-      );
-
-      return {
-        id,
-        type: "status",
-        title: "Your concern has been submitted",
-        message: `"${item.title}" has been recorded. Current status: ${
-          {
-            submitted: "Submitted",
-            in_review: "Under review",
-            in_progress: "In progress",
-            resolved: "Resolved",
-            closed: "Closed",
-          }[item.status] ?? item.status ?? "Submitted"
-        }.`,
-        caseId: item.case_id,
-        date,
-        time,
-        icon: Clock3,
-        unread: !readStatus[id],
-        sortDate: new Date(
-          item.created_at ?? 0
-        ).getTime(),
-      };
-    })
-    .sort((a, b) => b.sortDate - a.sortDate);
-}
-
-function NotificationCard({ notification, onMarkRead }) {
-  const Icon = notification.icon;
-
+function NotificationCard({ notification, unread, onMarkRead }) {
   return (
-    <article
-      className={`notification-card ${
-        notification.unread ? "is-unread" : ""
-      }`}
-    >
+    <article className={`notification-card${unread ? " is-unread" : ""}`}>
       <div className="notification-icon">
-        <Icon size={20} aria-hidden="true" />
+        <Clock3 size={20} aria-hidden="true" />
       </div>
-
       <div className="notification-content">
         <div className="notification-title-row">
           <h3>{notification.title}</h3>
-
-          {notification.unread && (
-            <span
-              className="notification-unread-dot"
-              aria-label="Unread"
-            />
+          {unread && (
+            <span className="notification-unread-dot" aria-label="Unread" />
           )}
         </div>
-
-        <p>{notification.message}</p>
-
+        <p className="notification-case-reference">
+          Case {notification.caseId}
+          {notification.caseTitle ? ` · ${notification.caseTitle}` : ""}
+        </p>
+        {notification.message && <p>{notification.message}</p>}
         <div className="notification-meta">
-          <span>{notification.date}</span>
-
-          {notification.time && (
+          <span>{statusTimestamp(notification.createdAt)}</span>
+          {notification.type && (
             <>
               <span aria-hidden="true">·</span>
-              <span>{notification.time}</span>
+              <span>{notification.type.replaceAll("_", " ")}</span>
             </>
           )}
         </div>
-
         <div className="notification-actions">
-          <Link to={`/cases/${notification.caseId}`}>
-            View case
-          </Link>
-
-          {notification.unread && (
+          <Link to={`/cases/${notification.caseId}`}>View case</Link>
+          {unread && (
             <button
               type="button"
               className="notification-mark-read"
@@ -137,83 +55,17 @@ function NotificationCard({ notification, onMarkRead }) {
 }
 
 export default function Notifications() {
-  const [items, setItems] = useState([]);
-  const [readStatus, setReadStatus] = useState(readReadStatus);
-  const [filter, setFilter] = useState("all");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadNotifications() {
-      try {
-        setLoading(true);
-        setError("");
-
-        const data = await getMyNotifications();
-
-        if (!cancelled) {
-          setItems(Array.isArray(data) ? data : []);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err.message || "Could not load notifications.");
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    loadNotifications();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const notifications = createNotifications(items, readStatus);
-
-  const unreadCount = notifications.filter(
-    (notification) => notification.unread
-  ).length;
-
-  const visibleNotifications = notifications.filter((notification) =>
-    filter === "unread" ? notification.unread : true
-  );
-
-  function saveReadStatus(updatedStatus) {
-    try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify(updatedStatus)
-      );
-
-      setReadStatus(updatedStatus);
-    } catch (err) {
-      console.error("Could not save read status:", err);
-      setError("Could not save notification read status.");
-    }
-  }
-
-  function markAsRead(notificationId) {
-    saveReadStatus({
-      ...readStatus,
-      [notificationId]: true,
-    });
-  }
-
-  function markAllAsRead() {
-    const updatedStatus = { ...readStatus };
-
-    notifications.forEach((notification) => {
-      updatedStatus[notification.id] = true;
-    });
-
-    saveReadStatus(updatedStatus);
-  }
+  const {
+    items,
+    unreadCount,
+    loading,
+    error,
+    readStateError,
+    refresh,
+    markAsRead,
+    markAllAsRead,
+    isRead,
+  } = useNotifications();
 
   return (
     <main className="page-container notifications-page">
@@ -225,18 +77,12 @@ export default function Notifications() {
         <div>
           <span className="eyebrow">YOUR UPDATES</span>
           <h1>Notifications</h1>
-          <p>
-            Updates generated from your submitted concerns.
-          </p>
+          <p>Updates recorded in your cases and visible to you.</p>
         </div>
-
-        <div className="notifications-heading-icon">
-          <Bell size={25} aria-hidden="true" />
-
+        <div className="notifications-heading-icon" aria-hidden="true">
+          <Bell size={25} />
           {unreadCount > 0 && (
-            <span className="notification-count">
-              {unreadCount}
-            </span>
+            <span className="notification-count">{unreadCount}</span>
           )}
         </div>
       </section>
@@ -244,102 +90,80 @@ export default function Notifications() {
       <section className="notifications-panel">
         <div className="notifications-toolbar">
           <div>
-            <h2>Your activity</h2>
+            <h2>Case activity</h2>
             <p>
               {loading
-                ? "Loading your notifications..."
+                ? "Loading case updates..."
                 : error
-                  ? "Notifications could not be loaded."
-                  : unreadCount === 0
-                    ? "You're all caught up."
-                    : `You have ${unreadCount} unread ${
-                        unreadCount === 1
-                          ? "notification"
-                          : "notifications"
-                      }.`}
+                  ? "Case updates could not be loaded."
+                  : unreadCount
+                    ? `${unreadCount} unread in this browser`
+                    : "No unread updates in this browser."}
             </p>
           </div>
-
-          {!loading && !error && unreadCount > 0 && (
+          <div className="notification-toolbar-actions">
             <button
               type="button"
               className="notification-mark-all"
-              onClick={markAllAsRead}
+              onClick={refresh}
+              disabled={loading}
             >
-              <CheckCheck size={16} aria-hidden="true" />
-              Mark all as read
+              {loading ? "Refreshing..." : "Refresh updates"}
             </button>
-          )}
-        </div>
-
-        <div
-          className="notification-filters"
-          aria-label="Filter notifications"
-        >
-          <button
-            type="button"
-            className={filter === "all" ? "active" : ""}
-            aria-pressed={filter === "all"}
-            onClick={() => setFilter("all")}
-          >
-            All ({notifications.length})
-          </button>
-
-          <button
-            type="button"
-            className={filter === "unread" ? "active" : ""}
-            aria-pressed={filter === "unread"}
-            onClick={() => setFilter("unread")}
-          >
-            Unread ({unreadCount})
-          </button>
+            {!loading && unreadCount > 0 && (
+              <button
+                type="button"
+                className="notification-mark-all"
+                onClick={markAllAsRead}
+              >
+                <CheckCheck size={16} aria-hidden="true" />
+                Mark all as read
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="notifications-list">
           {loading ? (
-            <p role="status">Fetching cases from the server...</p>
+            <p role="status">Fetching your case activity...</p>
           ) : error ? (
             <div role="alert" className="notifications-empty">
               <MessageCircle size={25} aria-hidden="true" />
-              <h3>Couldn't load notifications</h3>
+              <h3>Couldn't load updates</h3>
               <p>{error}</p>
-              <button
-                type="button"
-                onClick={() => window.location.reload()}
-              >
+              <button type="button" onClick={refresh}>
                 Try again
               </button>
             </div>
-          ) : visibleNotifications.length > 0 ? (
-            visibleNotifications.map((notification) => (
+          ) : items.length ? (
+            items.map((notification) => (
               <NotificationCard
                 key={notification.id}
                 notification={notification}
+                unread={!isRead(notification.id)}
                 onMarkRead={markAsRead}
               />
             ))
           ) : (
             <div className="notifications-empty">
               <MessageCircle size={25} aria-hidden="true" />
-              <h3>
-                {filter === "unread"
-                  ? "No unread notifications"
-                  : "No notifications yet"}
-              </h3>
-              <p>
-                {filter === "unread"
-                  ? "You're all caught up."
-                  : "Notifications will appear here after you submit a concern."}
-              </p>
+              <h3>No case updates yet</h3>
+              <p>Updates will appear here when they are recorded on a case.</p>
             </div>
           )}
         </div>
 
-        <p className="notification-demo-note">
+        <p className="notification-capability-note">
           <ShieldCheck size={15} aria-hidden="true" />
-          Notifications are retrieved from your own cases through the
-          authenticated backend. Read status is saved in this browser.
+          Updates come from your own case progress timeline. Read status is
+          saved in this browser only. Private Department-to-Coordinator
+          messages are not available in this student feed.
         </p>
+        {readStateError && (
+          <p role="alert" className="field-error">
+            {readStateError}
+          </p>
+        )}
       </section>
     </main>
   );

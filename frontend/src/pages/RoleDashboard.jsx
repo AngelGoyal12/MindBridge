@@ -1,24 +1,22 @@
 import { useEffect, useState } from "react";
 
 import { useAuth } from "../context/authContext";
+import { caseStatusLabel, statusTimestamp } from "../services/casePresentation";
 import {
   assignCoordinator,
   assignDepartment,
   getAdminCases,
   getAuthorizedDepartments,
+  createCoordinatorProgressUpdate,
+  createDepartmentActionRequest,
   getCoordinatorCases,
+  getCoordinatorActionRequests,
   getDepartmentCases,
-  requestCoordinatorIdentityDisclosure,
+  decideCoordinatorActionRequest,
   updateCoordinatorCaseStatus,
 } from "../services/caseService";
 
-const statusOptions = [
-  "submitted",
-  "in_review",
-  "in_progress",
-  "resolved",
-  "closed",
-];
+const statusOptions = ["in_review", "in_progress", "closed"];
 
 const labels = {
   coordinator: "Coordinator workspace",
@@ -32,14 +30,19 @@ function CaseRows({ cases, departments, role, onUpdate }) {
   const [assignmentLoading, setAssignmentLoading] = useState({});
   const [departmentErrors, setDepartmentErrors] = useState({});
   const [departmentLoading, setDepartmentLoading] = useState({});
-  const [disclosureRequests, setDisclosureRequests] = useState({});
-  const [disclosures, setDisclosures] = useState({});
-  const [disclosureErrors, setDisclosureErrors] = useState({});
-  const [disclosureLoading, setDisclosureLoading] = useState({});
+  const [closureOutcomes, setClosureOutcomes] = useState({});
+  const [progressForms, setProgressForms] = useState({});
+  const [progressErrors, setProgressErrors] = useState({});
+  const [progressLoading, setProgressLoading] = useState({});
+  const [actionForms, setActionForms] = useState({});
+  const [actionErrors, setActionErrors] = useState({});
+  const [actionLoading, setActionLoading] = useState({});
+  const [statusLoading, setStatusLoading] = useState({});
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
   async function saveCoordinator(caseItem) {
+    if (assignmentLoading[caseItem.id]) return;
     const coordinatorEmail = (
       assignments[caseItem.id] ??
       caseItem.assigned_coordinator_email ??
@@ -68,8 +71,8 @@ function CaseRows({ cases, departments, role, onUpdate }) {
       }));
       setMessage(
         result.assignment_status === "invitation_sent"
-          ? `Coordinator invitation emailed for case ${caseItem.id}.`
-          : `Case ${caseItem.id} assigned to ${result.coordinator_email}.`,
+          ? `Coordinator invitation sent for case ${caseItem.id}.`
+          : `Coordinator assigned successfully to case ${caseItem.id}.`,
       );
     } catch (err) {
       setAssignmentErrors((current) => ({
@@ -85,6 +88,7 @@ function CaseRows({ cases, departments, role, onUpdate }) {
   }
 
   async function saveDepartment(caseItem) {
+    if (departmentLoading[caseItem.id]) return;
     const department =
       assignments[`department-${caseItem.id}`] ?? caseItem.department ?? "";
     if (!department) {
@@ -108,9 +112,7 @@ function CaseRows({ cases, departments, role, onUpdate }) {
         ...current,
         [`department-${caseItem.id}`]: result.case.department,
       }));
-      setMessage(
-        `Case ${caseItem.id} routed to ${result.case.department}.`,
-      );
+      setMessage(`Case ${caseItem.id} routed to ${result.case.department}.`);
     } catch (err) {
       setDepartmentErrors((current) => ({
         ...current,
@@ -125,36 +127,88 @@ function CaseRows({ cases, departments, role, onUpdate }) {
   }
 
   async function changeStatus(caseItem, status) {
+    if (statusLoading[caseItem.id] || status === caseItem.status) return;
+    const closing = status === "closed";
+    const outcome = closureOutcomes[caseItem.id]?.trim();
+    if (closing && !outcome) {
+      setError(`Add a closure outcome for case ${caseItem.id} before closing it.`);
+      return;
+    }
+    if (closing && !window.confirm(`Close case ${caseItem.id} with the outcome below?`)) return;
     try {
       setError("");
       setMessage("");
-      const result = await updateCoordinatorCaseStatus(caseItem.id, status);
+      setStatusLoading((current) => ({ ...current, [caseItem.id]: true }));
+      const result = await updateCoordinatorCaseStatus(
+        caseItem.id,
+        status,
+        closing ? outcome : undefined,
+      );
       onUpdate(result.case);
-      setMessage(`Case ${caseItem.id} status updated.`);
+      if (closing) {
+        setClosureOutcomes((current) => ({ ...current, [caseItem.id]: "" }));
+        setMessage(`Case ${caseItem.id} closed successfully.`);
+      } else {
+        setMessage(`Case ${caseItem.id} status updated to ${caseStatusLabel(status)}.`);
+      }
     } catch (err) {
       setError(err.message || "Could not update case status.");
+    } finally {
+      setStatusLoading((current) => ({ ...current, [caseItem.id]: false }));
     }
   }
 
-  async function requestDisclosure(caseItem) {
-    const request = disclosureRequests[caseItem.id] || {};
-    setDisclosureLoading((current) => ({ ...current, [caseItem.id]: true }));
-    setDisclosureErrors((current) => ({ ...current, [caseItem.id]: "" }));
+  async function addProgressUpdate(caseItem) {
+    if (progressLoading[caseItem.id]) return;
+    const update = progressForms[caseItem.id] || {};
+    setProgressLoading((current) => ({ ...current, [caseItem.id]: true }));
+    setProgressErrors((current) => ({ ...current, [caseItem.id]: "" }));
     try {
-      const identity = await requestCoordinatorIdentityDisclosure(caseItem.id, {
-        purpose: request.purpose?.trim() || "",
-        scope: request.scope?.trim() || "",
+      const result = await createCoordinatorProgressUpdate(caseItem.id, {
+        title: update.title?.trim() || "",
+        message: update.message?.trim() || "",
       });
-      setDisclosures((current) => ({ ...current, [caseItem.id]: identity }));
-    } catch (err) {
-      setDisclosureErrors((current) => ({
+      onUpdate({
+        ...caseItem,
+        progress_updates: [...(caseItem.progress_updates || []), result.update],
+      });
+      setProgressForms((current) => ({
         ...current,
-        [caseItem.id]: err.status === 403
-          ? "Identity disclosure was denied. Active consent for this exact purpose and scope is required."
-          : err.message || "Could not request identity disclosure.",
+        [caseItem.id]: { title: "", message: "" },
+      }));
+      setMessage(`Follow-up added to case ${caseItem.id}.`);
+    } catch (err) {
+      setProgressErrors((current) => ({
+        ...current,
+        [caseItem.id]: err.message || "Could not add the follow-up.",
       }));
     } finally {
-      setDisclosureLoading((current) => ({ ...current, [caseItem.id]: false }));
+      setProgressLoading((current) => ({ ...current, [caseItem.id]: false }));
+    }
+  }
+
+  async function sendActionRequest(caseItem) {
+    if (actionLoading[caseItem.id]) return;
+    const request = actionForms[caseItem.id] || {};
+    setActionLoading((current) => ({ ...current, [caseItem.id]: true }));
+    setActionErrors((current) => ({ ...current, [caseItem.id]: "" }));
+    try {
+      await createDepartmentActionRequest(caseItem.id, {
+        request_type: request.request_type || "update",
+        message: request.message?.trim() || "",
+      });
+      setActionForms((current) => ({
+        ...current,
+        [caseItem.id]: { request_type: "update", message: "" },
+      }));
+      setMessage(`Update sent to the Coordinator for case ${caseItem.id}.`);
+    } catch (err) {
+      setActionErrors((current) => ({
+        ...current,
+        [caseItem.id]: err.message || "Could not send this message.",
+      }));
+    } finally {
+      setActionLoading((current) => ({ ...current, [caseItem.id]: false }));
     }
   }
 
@@ -174,65 +228,92 @@ function CaseRows({ cases, departments, role, onUpdate }) {
               <h2>{caseItem.category}</h2>
             </div>
             <span className={`status-badge case-status-${caseItem.status}`}>
-              {caseItem.status.replaceAll("_", " ")}
+              {caseStatusLabel(caseItem.status)}
             </span>
           </div>
 
           {role === "coordinator" && (
             <>
+              <h3>{caseItem.title}</h3>
               <p>
-                Student identity and free-text report content are withheld in
-                routine review. Review the available category and status only.
+                {caseItem.description}
+              </p>
+              <p>
+                Department consent:{" "}
+                <strong>
+                  {(caseItem.department_consent?.level || "anonymous").replaceAll("_", " ")}
+                </strong>
+                {caseItem.department_consent?.level === "restricted" &&
+                  ` — fields selected: ${(caseItem.department_consent.fields || []).join(", ") || "none"}`}
+              </p>
+              <p>
+                Student: <strong>{caseItem.student_name || "Unavailable"}</strong>
+                {caseItem.student_email ? ` · ${caseItem.student_email}` : ""}
+                {caseItem.student_phone ? ` · ${caseItem.student_phone}` : ""}
+                {caseItem.student_department ? ` · ${caseItem.student_department}` : ""}
               </p>
               <label className="field-group">
                 Update status
                 <select
                   value={caseItem.status}
+                  disabled={Boolean(statusLoading[caseItem.id])}
+                  aria-label={`Update status for case ${caseItem.id}`}
                   onChange={(event) =>
                     changeStatus(caseItem, event.target.value)
                   }
                 >
+                  {!statusOptions.includes(caseItem.status) && (
+                    <option value={caseItem.status} disabled>
+                      {caseItem.status.replaceAll("_", " ")}
+                    </option>
+                  )}
                   {statusOptions.map((status) => (
                     <option key={status} value={status}>
-                      {status.replaceAll("_", " ")}
+                      {caseStatusLabel(status)}
                     </option>
                   ))}
                 </select>
               </label>
-              <details className="coordinator-disclosure">
-                <summary>Request consent-authorized identity disclosure</summary>
-                <p>
-                  This request succeeds only if the student has granted active
-                  consent to you for the exact purpose and scope below. Anonymous
-                  cases cannot disclose identity.
-                </p>
+              {caseItem.status !== "closed" && (
                 <label className="field-group">
-                  Purpose from the consent grant
+                  Closure outcome (required to close)
+                  <textarea
+                    minLength={2}
+                    maxLength={2000}
+                    required
+                    aria-label={`Closure outcome for case ${caseItem.id}`}
+                    disabled={Boolean(statusLoading[caseItem.id])}
+                    value={closureOutcomes[caseItem.id] || ""}
+                    onChange={(event) => setClosureOutcomes((current) => ({
+                      ...current,
+                      [caseItem.id]: event.target.value,
+                    }))}
+                  />
+                </label>
+              )}
+              <details>
+                <summary>Record a student-visible follow-up</summary>
+                <label className="field-group">
+                  Update title
                   <input
                     minLength={2}
-                    maxLength={255}
-                    value={disclosureRequests[caseItem.id]?.purpose || ""}
-                    onChange={(event) => setDisclosureRequests((current) => ({
+                    maxLength={150}
+                    value={progressForms[caseItem.id]?.title || ""}
+                    onChange={(event) => setProgressForms((current) => ({
                       ...current,
-                      [caseItem.id]: {
-                        ...current[caseItem.id],
-                        purpose: event.target.value,
-                      },
+                      [caseItem.id]: { ...current[caseItem.id], title: event.target.value },
                     }))}
                   />
                 </label>
                 <label className="field-group">
-                  Scope from the consent grant
+                  Progress or follow-up
                   <textarea
                     minLength={2}
                     maxLength={2000}
-                    value={disclosureRequests[caseItem.id]?.scope || ""}
-                    onChange={(event) => setDisclosureRequests((current) => ({
+                    value={progressForms[caseItem.id]?.message || ""}
+                    onChange={(event) => setProgressForms((current) => ({
                       ...current,
-                      [caseItem.id]: {
-                        ...current[caseItem.id],
-                        scope: event.target.value,
-                      },
+                      [caseItem.id]: { ...current[caseItem.id], message: event.target.value },
                     }))}
                   />
                 </label>
@@ -240,37 +321,39 @@ function CaseRows({ cases, departments, role, onUpdate }) {
                   type="button"
                   className="secondary-button"
                   disabled={
-                    disclosureLoading[caseItem.id] ||
-                    (disclosureRequests[caseItem.id]?.purpose || "").trim().length < 2 ||
-                    (disclosureRequests[caseItem.id]?.scope || "").trim().length < 2
+                    progressLoading[caseItem.id] ||
+                    !progressForms[caseItem.id]?.title?.trim() ||
+                    !progressForms[caseItem.id]?.message?.trim()
                   }
-                  onClick={() => requestDisclosure(caseItem)}
+                  onClick={() => addProgressUpdate(caseItem)}
                 >
-                  {disclosureLoading[caseItem.id]
-                    ? "Checking consent..."
-                    : "Check consent and request identity"}
+                  {progressLoading[caseItem.id] ? "Saving..." : "Add follow-up"}
                 </button>
-                {disclosureErrors[caseItem.id] && (
+                {progressErrors[caseItem.id] && (
                   <p role="alert" className="field-error">
-                    {disclosureErrors[caseItem.id]}
+                    {progressErrors[caseItem.id]}
                   </p>
-                )}
-                {disclosures[caseItem.id] && (
-                  <div role="status" className="coordinator-disclosed-identity">
-                    <strong>Identity disclosed under the recorded consent</strong>
-                    <p>{disclosures[caseItem.id].student_name}</p>
-                    <p>{disclosures[caseItem.id].student_email}</p>
-                    <p>
-                      Purpose: {disclosures[caseItem.id].purpose}. Scope:{" "}
-                      {disclosures[caseItem.id].scope}
-                    </p>
-                  </div>
                 )}
               </details>
             </>
           )}
 
           {role === "admin" && (
+            <>
+            <section
+              className="role-case-brief"
+              aria-label={`Redacted brief for case ${caseItem.id}`}
+            >
+              <h3>{caseItem.title}</h3>
+              <p>{caseItem.summary}</p>
+              <p>
+                Submitted:{" "}
+                {caseItem.created_at
+                  ? statusTimestamp(caseItem.created_at)
+                  : "Unavailable"}
+              </p>
+              {caseItem.urgency && <p>Urgency: {caseItem.urgency}</p>}
+            </section>
             <div className="role-assignment-controls">
               <label className="field-group">
                 Coordinator email
@@ -278,6 +361,7 @@ function CaseRows({ cases, departments, role, onUpdate }) {
                   type="email"
                   autoComplete="off"
                   placeholder="coordinator@institution.edu"
+                  aria-label={`Coordinator email for case ${caseItem.id}`}
                   value={
                     assignments[caseItem.id] ??
                     caseItem.assigned_coordinator_email ??
@@ -294,7 +378,10 @@ function CaseRows({ cases, departments, role, onUpdate }) {
               <button
                 type="button"
                 className="secondary-button"
-                disabled={assignmentLoading[caseItem.id]}
+                disabled={
+                  assignmentLoading[caseItem.id] ||
+                  !(assignments[caseItem.id] ?? caseItem.assigned_coordinator_email ?? "").trim()
+                }
                 onClick={() => saveCoordinator(caseItem)}
               >
                 {assignmentLoading[caseItem.id]
@@ -311,6 +398,7 @@ function CaseRows({ cases, departments, role, onUpdate }) {
                 addresses receive a one-time activation invitation.
               </p>
             </div>
+            </>
           )}
 
           {(role === "admin" || role === "coordinator") && (
@@ -380,13 +468,145 @@ function CaseRows({ cases, departments, role, onUpdate }) {
           )}
 
           {role === "department_staff" && (
-            <p>
-              Routed to your department. Student identity and report details
-              are not available in this view.
-            </p>
+            <>
+              <h3>{caseItem.title}</h3>
+              <p>{caseItem.description}</p>
+              <p>
+                Identity consent:{" "}
+                <strong>
+                  {(caseItem.department_consent?.level || "anonymous").replaceAll("_", " ")}
+                </strong>
+                {caseItem.department_consent?.level === "restricted" &&
+                  ` — fields shared: ${(caseItem.department_consent.fields || []).join(", ") || "none"}`}
+              </p>
+              {caseItem.department_identity_consent && (
+                <div>
+                  {caseItem.student_name && <p>Student: {caseItem.student_name}</p>}
+                  {caseItem.student_email && <p>Email: {caseItem.student_email}</p>}
+                  {caseItem.student_phone && <p>Phone: {caseItem.student_phone}</p>}
+                  {caseItem.student_department && <p>Student department: {caseItem.student_department}</p>}
+                </div>
+              )}
+              {caseItem.coordinator_available ? (
+                <details>
+                <summary>Send an update or action request to the Coordinator</summary>
+                <label className="field-group">
+                  Request type
+                  <select
+                    value={actionForms[caseItem.id]?.request_type || "update"}
+                    onChange={(event) => setActionForms((current) => ({
+                      ...current,
+                      [caseItem.id]: {
+                        ...current[caseItem.id],
+                        request_type: event.target.value,
+                      },
+                    }))}
+                  >
+                    <option value="update">Case-related update</option>
+                    <option value="closure_request">Request case closure</option>
+                  </select>
+                </label>
+                <label className="field-group">
+                  Message
+                  <textarea
+                    aria-label={`Message to Coordinator for case ${caseItem.id}`}
+                    minLength={2}
+                    maxLength={2000}
+                    value={actionForms[caseItem.id]?.message || ""}
+                    onChange={(event) => setActionForms((current) => ({
+                      ...current,
+                      [caseItem.id]: {
+                        ...current[caseItem.id],
+                        message: event.target.value,
+                      },
+                    }))}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={
+                    actionLoading[caseItem.id] ||
+                    (actionForms[caseItem.id]?.message || "").trim().length < 2
+                  }
+                  onClick={() => sendActionRequest(caseItem)}
+                >
+                  {actionLoading[caseItem.id] ? "Sending..." : "Send to Coordinator"}
+                </button>
+                {actionErrors[caseItem.id] && (
+                  <p role="alert" className="field-error">
+                    {actionErrors[caseItem.id]}
+                  </p>
+                )}
+                </details>
+              ) : (
+                <p>This case has no assigned Coordinator to contact yet.</p>
+              )}
+              <p>Department staff cannot change the case status or close cases.</p>
+            </>
           )}
         </article>
       ))}
+    </div>
+  );
+}
+
+function CoordinatorActionRequests({ requests, cases, onDecision, loadingById }) {
+  if (!requests.length) {
+    return <p>No department updates or action requests.</p>;
+  }
+
+  return (
+    <div className="role-case-list">
+      {requests.map((request) => {
+        const relatedCase = cases.find((item) => item.id === request.case_id);
+        return (
+        <article className="role-case-card" key={request.id}>
+          <div className="role-case-heading">
+            <div>
+              <span className="section-overline">CASE {request.case_id}</span>
+              <h3>
+                {request.request_type === "closure_request"
+                  ? "Closure request"
+                  : "Department update"}
+              </h3>
+              {relatedCase?.title && <p>{relatedCase.title}</p>}
+            </div>
+            <span>{request.status}</span>
+          </div>
+          <p className="request-created-at">
+            Received {statusTimestamp(request.created_at)}
+          </p>
+          <p>{request.message}</p>
+          {request.status === "open" && (
+            <div className="role-assignment-controls">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={Boolean(loadingById[request.id])}
+                onClick={() => onDecision(request.id, "handled")}
+              >
+                {loadingById[request.id] ? "Saving..." : "Mark handled"}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={Boolean(loadingById[request.id])}
+                onClick={() => onDecision(request.id, "dismissed")}
+              >
+                Dismiss request
+              </button>
+              {request.request_type === "closure_request" && (
+                <p>
+                  Review the case and use its status control to close it with
+                  an outcome if appropriate. This request does not close the case.
+                </p>
+              )}
+            </div>
+          )}
+        </article>
+        );
+      })}
     </div>
   );
 }
@@ -396,8 +616,13 @@ export default function RoleDashboard() {
   const role = user.role;
   const [cases, setCases] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [actionRequests, setActionRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
+  const [requestLoading, setRequestLoading] = useState({});
+  const [requestError, setRequestError] = useState("");
+  const [requestMessage, setRequestMessage] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -411,15 +636,19 @@ export default function RoleDashboard() {
           admin: getAdminCases,
           department_staff: getDepartmentCases,
         }[role];
-        const [caseData, departmentData] = await Promise.all([
+        const [caseData, departmentData, actionRequestData] = await Promise.all([
           caseLoader(),
           role === "admin" || role === "coordinator"
             ? getAuthorizedDepartments()
+            : Promise.resolve([]),
+          role === "coordinator"
+            ? getCoordinatorActionRequests()
             : Promise.resolve([]),
         ]);
         if (!cancelled) {
           setCases(caseData);
           setDepartments(departmentData);
+          setActionRequests(actionRequestData);
         }
       } catch (err) {
         if (!cancelled) {
@@ -434,7 +663,7 @@ export default function RoleDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [role]);
+  }, [role, reloadKey]);
 
   function updateCase(updatedCase) {
     setCases((current) =>
@@ -442,6 +671,33 @@ export default function RoleDashboard() {
         item.id === updatedCase.id ? { ...item, ...updatedCase } : item,
       ),
     );
+  }
+
+  async function decideActionRequest(requestId, status) {
+    if (requestLoading[requestId]) return;
+    setRequestLoading((current) => ({ ...current, [requestId]: true }));
+    setRequestError("");
+    setRequestMessage("");
+    try {
+      const updatedRequest = await decideCoordinatorActionRequest(
+        requestId,
+        status,
+      );
+      setActionRequests((current) =>
+        current.map((item) =>
+          item.id === requestId ? updatedRequest : item,
+        ),
+      );
+      setRequestMessage(
+        status === "handled"
+          ? "Department request marked as handled."
+          : "Department request dismissed.",
+      );
+    } catch (err) {
+      setRequestError(err.message || "Could not update the department request.");
+    } finally {
+      setRequestLoading((current) => ({ ...current, [requestId]: false }));
+    }
   }
 
   return (
@@ -457,9 +713,9 @@ export default function RoleDashboard() {
           </h1>
           <p>
             {role === "coordinator" &&
-              "Review only the cases assigned to you. Student identity is withheld unless the student grants active, purpose-specific consent."}
+              "Review the full case details and student identity for cases assigned to you. You alone control case status, closure, and student-visible follow-ups."}
             {role === "admin" &&
-              "Manage case routing and assignments. Administrative access does not include protected student identity or report descriptions."}
+              "Manage case routing and assignments using redacted case briefs. Administrative access does not include student identity or contact details."}
             {role === "department_staff" &&
               `Only cases routed to ${user.department} are listed. This view contains minimum necessary case information.`}
           </p>
@@ -470,14 +726,41 @@ export default function RoleDashboard() {
         {loading ? (
           <p role="status">Loading authorized cases...</p>
         ) : error ? (
-          <p role="alert">{error}</p>
+          <div role="alert" className="workspace-error">
+            <p>{error}</p>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setReloadKey((key) => key + 1)}
+            >
+              Retry loading workspace
+            </button>
+          </div>
         ) : (
-          <CaseRows
-            cases={cases}
-            departments={departments}
-            role={role}
-            onUpdate={updateCase}
-          />
+          <>
+            {requestError && <p role="alert" className="field-error">{requestError}</p>}
+            {requestMessage && <p role="status" className="role-feedback">{requestMessage}</p>}
+            {role === "coordinator" && (
+              <section aria-labelledby="department-requests-heading">
+                <h2 id="department-requests-heading">
+                  Department updates and requests
+                </h2>
+                <CoordinatorActionRequests
+                  requests={actionRequests}
+                  cases={cases}
+                  onDecision={decideActionRequest}
+                  loadingById={requestLoading}
+                />
+              </section>
+            )}
+            <h2>Cases</h2>
+            <CaseRows
+              cases={cases}
+              departments={departments}
+              role={role}
+              onUpdate={updateCase}
+            />
+          </>
         )}
       </section>
     </main>

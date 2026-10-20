@@ -29,6 +29,8 @@ export function registerStudent({
   name,
   email,
   phone,
+  departmentCourse,
+  currentSemester,
   password,
   confirmPassword,
 }) {
@@ -38,6 +40,8 @@ export function registerStudent({
       name,
       email,
       phone,
+      department_course: departmentCourse,
+      current_semester: currentSemester,
       password,
       confirm_password: confirmPassword,
     }),

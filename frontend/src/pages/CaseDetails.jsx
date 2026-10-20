@@ -4,20 +4,19 @@ import {
   ArrowLeft,
   ArrowUpRight,
   CalendarDays,
-  Check,
   Clock3,
   FileText,
   LockKeyhole,
   ShieldCheck,
   CircleHelp,
-  CircleCheck,
 } from 'lucide-react';
+import CaseProgressTracker from "../components/CaseProgressTracker";
+import { caseStatusLabel, normalizeCaseStatus, statusTimestamp } from "../services/casePresentation";
 
 import {
   getCaseById,
   getCaseConsents,
   getCaseDisclosureAudit,
-  grantCaseConsent,
   updateCaseIdentity,
   withdrawCaseConsent,
 } from "../services/caseService";
@@ -154,23 +153,24 @@ function formatStoredCase(item) {
     other: 'Other support',
   };
 
-  const statusLabels = {
-    submitted: 'Submitted',
-    in_review: 'Under review',
-    in_progress: 'In progress',
-    resolved: 'Resolved',
-    closed: 'Closed',
-  };
-
   const createdAt = item.created_at ?? item.createdAt;
 
   const date = createdAt
     ? createdAt.slice(0, 10)
     : item.date ?? '';
+  const progressUpdates = Array.isArray(item.progress_updates)
+    ? item.progress_updates
+    : [];
 
   return {
     ...item,
     identityMode: item.identity_mode ?? item.identityMode ?? 'restricted',
+    departmentIdentityConsent: Boolean(item.department_identity_consent),
+    departmentConsent: item.department_consent ?? {
+      level: 'anonymous',
+      fields: [],
+      active: false,
+    },
     category:
       categoryLabels[item.category] ??
       item.categoryLabel ??
@@ -178,42 +178,31 @@ function formatStoredCase(item) {
       'Other support',
 
   categoryValue: item.categoryValue ?? item.category,
-  statusValue: item.statusValue ?? item.status ?? 'submitted',
-  status:
-    statusLabels[item.status] ??
-    item.statusLabel ??
-    item.status ??
-    'Submitted',
+  statusValue: normalizeCaseStatus(item.status),
+  status: caseStatusLabel(item.status),
   date,
 
-    updates: item.updates ?? [
-  {
-    date: date || 'Date unavailable',
-    title: 'Concern submitted',
-    description: 'Your concern has been saved.',
-    type: 'complete',
-  },
-],
+    progress_updates: progressUpdates,
   };
 }
 
 const privacyDetails = {
   identified: {
-    title: 'Identified case; disclosure still requires consent',
+    title: 'Identity linked to your account',
     description:
-      'Your case is linked to your account. Coordinators do not see your identity in routine review; exact, active consent is still required.',
+      'The assigned Coordinator can see your identity. Department access follows the separate consent choice recorded for this case.',
     icon: ShieldCheck,
   },
   restricted: {
-    title: 'Restricted identity sharing',
+    title: 'Restricted identity preference',
     description:
-      'Your case is linked to your account. Coordinators do not see your identity in routine review; disclosure requires exact, active consent.',
+      'Your case is linked to your account. Department identity disclosure is controlled by your case-specific consent.',
     icon: LockKeyhole,
   },
   anonymous: {
-    title: 'Coordinator identity disclosure blocked',
+    title: 'Identity preference: restricted',
     description:
-      'Identity disclosure is blocked for this case. The case remains linked to your account, and details you submitted may still identify you.',
+      'This preference does not replace your department consent decision. Details in your report may still identify you.',
     icon: ShieldCheck,
   },
 };
@@ -254,12 +243,8 @@ export default function CaseDetails() {
   const [consentLoading, setConsentLoading] = useState(true);
   const [consentError, setConsentError] = useState('');
   const [consentMessage, setConsentMessage] = useState('');
-  const [consentForm, setConsentForm] = useState({
-    recipient: '',
-    purpose: '',
-    scope: '',
-  });
   const [identitySaving, setIdentitySaving] = useState(false);
+  const [withdrawingConsentId, setWithdrawingConsentId] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -320,12 +305,14 @@ export default function CaseDetails() {
     const identityMode = event.target.value;
     setIdentitySaving(true);
     setConsentError('');
+    setConsentMessage('');
     try {
       const response = await updateCaseIdentity(caseId, identityMode);
       setCaseItem((current) => ({
         ...current,
         identityMode: response.case.identity_mode,
       }));
+      setConsentMessage('Identity preference updated.');
     } catch (err) {
       setConsentError(err.message || 'Could not update the identity preference.');
     } finally {
@@ -333,36 +320,31 @@ export default function CaseDetails() {
     }
   }
 
-  async function handleGrantConsent(event) {
-    event.preventDefault();
-    setConsentError('');
-    setConsentMessage('');
-    try {
-      await grantCaseConsent(caseId, {
-        ...consentForm,
-        recipient: consentForm.recipient.trim(),
-        purpose: consentForm.purpose.trim(),
-        scope: consentForm.scope.trim(),
-      });
-      setConsentForm({ recipient: '', purpose: '', scope: '' });
-      setConsents(await getCaseConsents(caseId));
-      setDisclosureAudit(await getCaseDisclosureAudit(caseId));
-      setConsentMessage('Your consent has been recorded.');
-    } catch (err) {
-      setConsentError(err.message || 'Could not record consent.');
-    }
-  }
-
   async function handleWithdrawConsent(consentId) {
+    if (withdrawingConsentId !== null) return;
+    if (!window.confirm("Withdraw this case's active department identity consent?")) {
+      return;
+    }
     setConsentError('');
     setConsentMessage('');
+    setWithdrawingConsentId(consentId);
     try {
       await withdrawCaseConsent(caseId, consentId);
       setConsents(await getCaseConsents(caseId));
       setDisclosureAudit(await getCaseDisclosureAudit(caseId));
+      setCaseItem((current) => ({
+        ...current,
+        departmentIdentityConsent: false,
+        departmentConsent: {
+          ...current.departmentConsent,
+          active: false,
+        },
+      }));
       setConsentMessage('Consent has been withdrawn.');
     } catch (err) {
       setConsentError(err.message || 'Could not withdraw consent.');
+    } finally {
+      setWithdrawingConsentId(null);
     }
   }
 
@@ -404,37 +386,6 @@ export default function CaseDetails() {
     privacyDetails[caseItem.identityMode] ?? privacyDetails.restricted;
   const PrivacyIcon = privacy.icon;
 
-  const steps = [
-    {
-      title: 'Concern submitted',
-      description: 'Your concern has been recorded.',
-      completed: true,
-    },
-    {
-      title: 'Initial review',
-      description: 'A coordinator checks the information and next steps.',
-      completed: [
-  'in_review',
-  'under_review',
-  'in_progress',
-  'resolved',
-  'closed',
-].includes(caseItem.statusValue),
-    },
-    {
-      title: 'Action and follow-up',
-      description: 'The relevant team handles the agreed next steps.',
-      completed: ['in_progress', 'resolved'].includes(caseItem.statusValue),
-    },
-    {
-      title: 'Resolution',
-      description: 'The case is marked resolved after follow-up.',
-      completed: ['resolved', 'closed'].includes(caseItem.statusValue),
-    },
-  ];
-
-  const currentStep = steps.findIndex((step) => !step.completed);
-
   return (
     <main className="case-details-page page-container">
       <NavLink to="/cases" className="back-link">
@@ -467,7 +418,7 @@ export default function CaseDetails() {
         <div className="case-detail-meta">
           <span>
             <CalendarDays size={15} />
-            Submitted {formatDate(caseItem.date)}
+            Submitted {statusTimestamp(caseItem.created_at)}
           </span>
           <span className="case-detail-meta-divider" />
           <span>
@@ -486,58 +437,42 @@ export default function CaseDetails() {
                 <h2>Where things stand</h2>
               </div>
               <span className="timeline-count">
-                {caseItem.updates?.length ?? 0} updates
+                {caseItem.progress_updates.length} recorded updates
               </span>
             </div>
-
-            <div className="case-progress-track">
-              {steps.map((step, index) => (
-                <div
-                  className={`progress-step ${step.completed ? 'completed' : ''
-                    } ${!step.completed &&
-                      index === currentStep
-                      ? 'current'
-                      : ''
-                    }`}
-                  key={step.title}
-                >
-                  <div className="progress-step-marker">
-                    {step.completed ? (
-                      <Check size={14} />
-                    ) : (
-                      <span>{String(index + 1).padStart(2, '0')}</span>
-                    )}
-                  </div>
-                  <div className="progress-step-copy">
-                    <strong>{step.title}</strong>
-                    <span>{step.description}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <p className="demo-disclaimer">
-  <CircleHelp size={15} />
-  The current case status comes from the backend. Historical
-  status changes are not available yet.
-</p>
+            <CaseProgressTracker caseItem={caseItem} />
           </section>
 
           <section className="detail-panel">
             <div className="detail-panel-heading">
               <div>
-                <span className="section-overline">IDENTITY & CONSENT</span>
-                <h2>Manage identity access</h2>
+                <span className="section-overline">DEPARTMENT CONSENT</span>
+                <h2>Identity sharing choice</h2>
               </div>
             </div>
             <p>
-              Identity is not shared with coordinators by default. A coordinator
-              can receive it only for the exact purpose and scope you authorize.
-              The block-disclosure mode prevents identity disclosure but does not
-              unlink your account or guarantee anonymity.
+              The assigned Coordinator can see your identity and full case
+              details. The assigned department receives only the identity fields
+              selected below. You can withdraw an active consent below.
             </p>
             <div className="field-group" style={{ marginTop: '18px' }}>
-              <label htmlFor="case-identity-mode">Identity preference</label>
+              <strong>
+                Consent level: {caseItem.departmentConsent.level.replaceAll('_', ' ')}
+              </strong>
+              <div>
+                Selected fields: {caseItem.departmentConsent.fields.length
+                  ? caseItem.departmentConsent.fields.join(', ')
+                  : 'none'}
+                {caseItem.departmentConsent.active ? '' : ' (no active disclosure)'}
+              </div>
+              <div>
+                Current routing: {caseItem.department || 'Not yet assigned'}
+              </div>
+            </div>
+            <div className="field-group" style={{ marginTop: '18px' }}>
+              <label htmlFor="case-identity-mode">
+                Additional identity preference
+              </label>
               <select
                 id="case-identity-mode"
                 value={caseItem.identityMode}
@@ -546,98 +481,42 @@ export default function CaseDetails() {
               >
                 <option value="identified">Identified</option>
                 <option value="restricted">Restricted</option>
-                <option value="anonymous">Block coordinator identity disclosure</option>
+                <option value="anonymous">No additional identity preference</option>
               </select>
-            </div>
-
-            <form onSubmit={handleGrantConsent} style={{ marginTop: '24px' }}>
-              <h3>Grant purpose-specific consent</h3>
               <p>
-                The recipient must be the coordinator currently assigned to
-                this case. Enter their account email.
+                This preference does not change department consent. Coordinators
+                assigned to the case can view your identity.
               </p>
-              <div className="field-group" style={{ marginTop: '16px' }}>
-                <label htmlFor="consent-recipient">Coordinator email</label>
-                <input
-                  id="consent-recipient"
-                  type="email"
-                  required
-                  value={consentForm.recipient}
-                  onChange={(event) => setConsentForm((current) => ({
-                    ...current,
-                    recipient: event.target.value,
-                  }))}
-                />
-              </div>
-              <div className="field-group" style={{ marginTop: '16px' }}>
-                <label htmlFor="consent-purpose">Purpose</label>
-                <input
-                  id="consent-purpose"
-                  required
-                  minLength={2}
-                  maxLength={255}
-                  value={consentForm.purpose}
-                  onChange={(event) => setConsentForm((current) => ({
-                    ...current,
-                    purpose: event.target.value,
-                  }))}
-                />
-              </div>
-              <div className="field-group" style={{ marginTop: '16px' }}>
-                <label htmlFor="consent-scope">Scope</label>
-                <textarea
-                  id="consent-scope"
-                  required
-                  minLength={2}
-                  maxLength={2000}
-                  value={consentForm.scope}
-                  onChange={(event) => setConsentForm((current) => ({
-                    ...current,
-                    scope: event.target.value,
-                  }))}
-                />
-              </div>
-              <button
-                type="submit"
-                className="button-primary"
-                style={{ marginTop: '16px' }}
-                disabled={caseItem.identityMode === 'anonymous'}
-              >
-                Grant consent
-              </button>
-              {caseItem.identityMode === 'anonymous' && (
-                <p>Change the identity mode before granting identity disclosure consent.</p>
-              )}
-            </form>
+            </div>
 
             {consentError && <p role="alert" className="field-error">{consentError}</p>}
             {consentMessage && <p role="status">{consentMessage}</p>}
 
-            <h3 style={{ marginTop: '28px' }}>Consent history</h3>
+            <h3 style={{ marginTop: '28px' }}>Consent record</h3>
             {consentLoading ? (
               <p role="status">Loading consent history...</p>
             ) : consents.length === 0 ? (
-              <p>No consent grants have been recorded for this case.</p>
+              <p>No department consent record is available for this case.</p>
             ) : (
               <ul>
                 {consents.map((consent) => (
                   <li key={consent.id} style={{ marginBlock: '12px' }}>
-                    <strong>{consent.purpose}</strong>
-                    <div>{consent.recipient} — {consent.scope}</div>
+                    <strong>Assigned department — {consent.scope}</strong>
                     <div>
                       {consent.granted && !consent.withdrawn_at
-                        ? caseItem.identityMode === 'anonymous'
-                          ? 'Grant active; disclosure blocked by current identity mode'
-                          : 'Active'
-                        : 'Withdrawn'}
+                        ? 'Consent active'
+                        : consent.granted
+                          ? 'Consent withdrawn'
+                          : 'Consent declined'}
                     </div>
                     {consent.granted && !consent.withdrawn_at && (
                       <button
                         type="button"
                         className="secondary-button"
+                        disabled={withdrawingConsentId !== null}
                         onClick={() => handleWithdrawConsent(consent.id)}
                       >
-                        Withdraw
+                        {withdrawingConsentId === consent.id ? 'Withdrawing...' : 'Withdraw'}
                       </button>
                     )}
                   </li>
@@ -645,9 +524,9 @@ export default function CaseDetails() {
               </ul>
             )}
 
-            <h3 style={{ marginTop: '28px' }}>Identity disclosure audit</h3>
+            <h3 style={{ marginTop: '28px' }}>Consent access history</h3>
             {disclosureAudit.length === 0 ? (
-              <p>No identity disclosure actions have been recorded.</p>
+              <p>No identity access actions have been recorded.</p>
             ) : (
               <ul>
                 {disclosureAudit.map((entry, index) => (
@@ -691,66 +570,19 @@ export default function CaseDetails() {
               </div>
 
               <div>
+                <span>Department</span>
+                <strong>{caseItem.department || 'Not yet assigned'}</strong>
+              </div>
+
+              <div>
                 <span>Current status</span>
                 <strong>{caseItem.status}</strong>
               </div>
 
-              <div>
-                <span>Incident date</span>
-                <strong>
-                  {caseItem.incidentDate
-                    ? formatDate(caseItem.incidentDate)
-                    : 'Not provided'}
-                </strong>
-              </div>
-
-              <div>
-                <span>Incident location</span>
-                <strong>
-                  {caseItem.incidentLocation?.trim() || 'Not provided'}
-                </strong>
-              </div>
-
-              <div>
-                <span>People involved</span>
-                <strong>
-                  {caseItem.peopleInvolved?.trim() || 'Not provided'}
-                </strong>
-              </div>
             </div>
 
           </section>
 
-          <section className="detail-panel">
-            <div className="detail-panel-heading">
-              <div>
-                <span className="section-overline">ACTIVITY</span>
-                <h2>Update history</h2>
-              </div>
-            </div>
-
-            <div className="activity-timeline">
-              {(caseItem.updates ?? []).map((update, index) => (
-                <article className="activity-item" key={`${update.title}-${index}`}>
-                  <div
-                    className={`activity-marker ${update.type === 'current' ? 'active' : ''
-                      }`}
-                  >
-                    {update.type === 'current' ? (
-                      <Clock3 size={15} />
-                    ) : (
-                      <CircleCheck size={15} />
-                    )}
-                  </div>
-                  <div className="activity-copy">
-                    <span>{update.date}</span>
-                    <h3>{update.title}</h3>
-                    <p>{update.description}</p>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
         </div>
 
         <aside className="case-detail-sidebar">
@@ -777,8 +609,9 @@ export default function CaseDetails() {
               If you need to provide more information, contact the authorized
               support team through the process your institution establishes.
             </p>
-            <p className="demo-small-note">
-              Replies and attachments are not enabled in this frontend demo.
+            <p className="case-capability-note">
+              This case view does not provide a student-to-staff message or
+              attachment endpoint.
             </p>
           </section>
 

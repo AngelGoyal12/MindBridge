@@ -1,5 +1,5 @@
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   ArrowDownUp,
@@ -10,8 +10,14 @@ import {
   FileText,
   CircleHelp,
 } from 'lucide-react';
+import CaseProgressTracker from "../components/CaseProgressTracker";
+import {
+  caseStatusLabel,
+  formatTimestamp,
+  normalizeCaseStatus,
+} from "../services/casePresentation";
 
-import { getMyCases } from "../services/caseService";
+import { useNotifications } from "../context/notificationContext";
 
 
 function formatStoredCase(item) {
@@ -19,18 +25,11 @@ function formatStoredCase(item) {
     ragging_bullying: 'Ragging & bullying',
     emotional_support: 'Emotional support',
     academic_support: 'Academic support',
+    academic: 'Academic',
     hostel_issue: 'Hostel & accommodation',
     financial_assistance: 'Financial assistance',
     other: 'Other support',
   };
-
-  const statusLabels = {
-  submitted: 'Submitted',
-  in_review: 'Under review',
-  in_progress: 'In progress',
-  resolved: 'Resolved',
-  closed: 'Closed',
-};
 
   return {
     ...item,
@@ -39,8 +38,8 @@ function formatStoredCase(item) {
       categoryLabels[item.category] ??
       item.categoryLabel ??
       item.category,
-    statusValue: item.statusValue ?? item.status,
-    status: statusLabels[item.status] ?? item.status,
+    statusValue: normalizeCaseStatus(item.status),
+    status: caseStatusLabel(item.status),
     date: item.date ?? item.created_at?.slice(0, 10) ?? item.createdAt?.slice(0, 10) ?? '',
   };
 }
@@ -49,24 +48,8 @@ const filters = [
   { label: 'All cases', value: 'all' },
   { label: 'Awaiting / under review', value: 'awaiting_review' },
   { label: 'In progress', value: 'in_progress' },
-  { label: 'Resolved', value: 'resolved' },
+  { label: 'Resolved / closed', value: 'resolved_closed' },
 ];
-
-function formatDate(date) {
-  if (!date) return 'Date unavailable';
-
-  const parsedDate = new Date(`${date}T00:00:00`);
-
-  if (Number.isNaN(parsedDate.getTime())) {
-    return 'Date unavailable';
-  }
-
-  return parsedDate.toLocaleDateString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-}
 
 function StatusBadge({ status, statusValue }) {
   return (
@@ -78,45 +61,14 @@ function StatusBadge({ status, statusValue }) {
 }
 
 export default function MyCases() {
+  const { cases: storedCases, loading, error, refresh } = useNotifications();
   const [activeFilter, setActiveFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [sortOrder, setSortOrder] = useState('newest');
-
-const [cases, setCases] = useState([]);
-const [loading, setLoading] = useState(true);
-const [error, setError] = useState('');
-
-useEffect(() => {
-  let cancelled = false;
-
-  async function loadCases() {
-    try {
-      setLoading(true);
-      setError('');
-
-      const data = await getMyCases();
-
-      if (!cancelled) {
-        setCases(data.map(formatStoredCase));
-      }
-    } catch (err) {
-      if (!cancelled) {
-        setError(err.message || 'Could not load cases.');
-      }
-    } finally {
-      if (!cancelled) {
-        setLoading(false);
-      }
-    }
-  }
-
-  loadCases();
-
-  return () => {
-    cancelled = true;
-  };
-}, []);
-
+  const cases = useMemo(
+    () => storedCases.map(formatStoredCase),
+    [storedCases],
+  );
 
   const filteredCases = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
@@ -126,21 +78,23 @@ useEffect(() => {
        const matchesFilter =
   activeFilter === 'all' ||
   (activeFilter === 'awaiting_review'
-    ? ['submitted', 'in_review'].includes(item.statusValue)
-    : item.statusValue === activeFilter);
+    ? ['submitted', 'awaiting_review', 'in_review', 'under_review'].includes(item.statusValue)
+    : activeFilter === 'in_progress'
+      ? item.statusValue === 'in_progress'
+      : ['resolved', 'closed'].includes(item.statusValue));
 
         const matchesSearch =
           !query ||
           String(item.id).toLowerCase().includes(query) ||
-          item.title.toLowerCase().includes(query) ||
+          String(item.title || '').toLowerCase().includes(query) ||
           item.category.toLowerCase().includes(query);
 
         return matchesFilter && matchesSearch;
       })
       .sort((a, b) =>
         sortOrder === 'newest'
-          ? b.date.localeCompare(a.date)
-          : a.date.localeCompare(b.date)
+          ? new Date(b.created_at || 0) - new Date(a.created_at || 0)
+          : new Date(a.created_at || 0) - new Date(b.created_at || 0)
       );
   }, [cases, activeFilter, searchTerm, sortOrder]);
 
@@ -148,15 +102,15 @@ useEffect(() => {
     all: cases.length,
 
     awaiting_review: cases.filter((item) =>
-  ['submitted', 'in_review'].includes(item.statusValue)
-).length,
+      ['submitted', 'awaiting_review', 'in_review', 'under_review'].includes(item.statusValue)
+    ).length,
 
     in_progress: cases.filter(
       (item) => item.statusValue === 'in_progress'
     ).length,
 
-    resolved: cases.filter(
-      (item) => item.statusValue === 'resolved'
+    resolved_closed: cases.filter(
+      (item) => ['resolved', 'closed'].includes(item.statusValue)
     ).length,
   };
 
@@ -185,8 +139,10 @@ useEffect(() => {
           <h2>Every step matters.</h2>
         </div>
         <div className="cases-summary-count">
-          <strong>{String(counts.all).padStart(2, '0')}</strong>
-          <span>demo cases</span>
+          <strong>
+            {loading || error ? '—' : String(counts.all).padStart(2, '0')}
+          </strong>
+          <span>cases</span>
         </div>
       </section>
 
@@ -242,13 +198,17 @@ useEffect(() => {
 
         <div className="cases-results">
 
-{loading ? (
-  <p role="status">Loading your cases...</p>
-) : error ? (
-  <p role="alert">Could not load cases: {error}</p>
-) : null}
-
-          {filteredCases.length > 0 ? (
+          {loading ? (
+            <p role="status">Loading your cases...</p>
+          ) : error ? (
+            <div role="alert" className="cases-empty">
+              <h3>Could not load your cases</h3>
+              <p>{error}</p>
+              <button type="button" className="secondary-button" onClick={refresh}>
+                Retry
+              </button>
+            </div>
+          ) : filteredCases.length > 0 ? (
             filteredCases.map((item, index) => (
               <article
                 className="case-history-card"
@@ -263,11 +223,15 @@ useEffect(() => {
                   <div className="case-history-meta">
                     <span>{item.id}</span>
                     <span className="case-meta-divider">·</span>
-                    <span>{formatDate(item.date)}</span>
+                    <span>{formatTimestamp(item.date)}</span>
                   </div>
 
                   <h3>{item.title}</h3>
                   <p>{item.category}</p>
+                  <p>
+                    Department: {item.department || 'Awaiting routing'}
+                  </p>
+                  <CaseProgressTracker caseItem={item} />
                 </div>
 
                 <div className="case-history-end">
@@ -311,11 +275,7 @@ useEffect(() => {
 
       <section className="cases-bottom-note">
         <SlidersHorizontal size={17} />
-        <p>
-          These are sample records for the MindBridge prototype.
-          The connected version will show only cases your account is
-          authorized to access.
-        </p>
+        <p>Progress updates contain student-visible case activity only.</p>
       </section>
     </main>
   );

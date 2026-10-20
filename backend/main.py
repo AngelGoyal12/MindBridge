@@ -1,7 +1,9 @@
 
 import hashlib
+import json
 import logging
 import os
+import re
 import secrets
 import smtplib
 import threading
@@ -278,6 +280,9 @@ CaseStatus = Literal[
     "resolved",
     "closed",
 ]
+DepartmentIdentityConsentRecipient = "assigned department"
+DepartmentIdentityConsentPurpose = "Department response"
+DepartmentIdentityConsentScope = "Student name and contact details"
 
 class CaseIdentityUpdate(BaseModel):
     identity_mode: Literal["identified", "restricted", "anonymous"]
@@ -288,6 +293,32 @@ class CaseCreate(BaseModel):
     title: str = Field(min_length=3, max_length=150)
     description: str = Field(min_length=10, max_length=5000)
     identity_mode: Literal["identified", "restricted", "anonymous"] = "identified"
+    department_consent_level: Literal[
+        "anonymous", "restricted", "full_disclosure"
+    ] = "anonymous"
+    department_consent_fields: list[
+        Literal["name", "email", "phone", "department"]
+    ] = Field(default_factory=list, max_length=4)
+    department_identity_consent: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_department_consent(self):
+        if (
+            self.department_identity_consent is not None
+            and "department_consent_level" not in self.model_fields_set
+        ):
+            if self.department_identity_consent:
+                self.department_consent_level = (
+                    "full_disclosure"
+                )
+        if (
+            self.department_consent_level != "restricted"
+            and self.department_consent_fields
+        ):
+            raise ValueError(
+                "Select identity fields only for restricted consent."
+            )
+        return self
 
 
 
@@ -354,7 +385,50 @@ class DepartmentAssignmentRequest(BaseModel):
 
 
 class CoordinatorCaseUpdate(BaseModel):
-    status: CaseStatus
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["in_review", "in_progress", "closed"]
+    closure_outcome: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=2000,
+    )
+
+    @model_validator(mode="after")
+    def require_closure_outcome(self):
+        if self.status == "closed" and not (self.closure_outcome or "").strip():
+            raise ValueError("A closure outcome is required to close a case.")
+        return self
+
+
+class CoordinatorProgressUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=2, max_length=150)
+    message: str = Field(min_length=2, max_length=2000)
+
+    @field_validator("title", "message")
+    @classmethod
+    def trim_required_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class DepartmentActionRequestCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_type: Literal["update", "closure_request"]
+    message: str = Field(min_length=2, max_length=2000)
+
+    @field_validator("message")
+    @classmethod
+    def trim_required_message(cls, value: str) -> str:
+        return value.strip()
+
+
+class DepartmentActionRequestDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["handled", "dismissed"]
 
 class ConsentRequest(BaseModel):
     purpose: str = Field(min_length=2, max_length=255)
@@ -392,34 +466,265 @@ def case_to_dict(case, viewer=None):
     return data
 
 
-def coordinator_case_to_dict(case):
+def case_progress_to_dict(update):
+    return {
+        "id": update.id,
+        "type": update.update_type,
+        "title": update.title,
+        "message": update.message,
+        "created_at": update.created_at,
+    }
+
+
+def get_case_progress_updates(db: Session, case_id: int):
+    updates = (
+        db.query(models.CaseProgressUpdate)
+        .filter(models.CaseProgressUpdate.case_id == case_id)
+        .order_by(
+            models.CaseProgressUpdate.created_at.asc(),
+            models.CaseProgressUpdate.id.asc(),
+        )
+        .all()
+    )
+    return [case_progress_to_dict(update) for update in updates]
+
+
+def department_identity_consent_granted(db: Session, case):
+    return department_consent_to_dict(db, case)["active"]
+
+
+def latest_department_identity_consent(db: Session, case):
+    consent = (
+        db.query(models.CaseConsent)
+        .filter(
+            models.CaseConsent.case_id == case.id,
+            models.CaseConsent.granted_by_user_id == case.student_id,
+            models.CaseConsent.recipient
+            == DepartmentIdentityConsentRecipient,
+            models.CaseConsent.purpose == DepartmentIdentityConsentPurpose,
+        )
+        .order_by(
+            models.CaseConsent.created_at.desc(),
+            models.CaseConsent.id.desc(),
+        )
+        .first()
+    )
+    return consent
+
+
+def department_consent_to_dict(db: Session, case):
+    consent = latest_department_identity_consent(db, case)
+    if consent is None:
+        return {"level": "anonymous", "fields": [], "active": False}
+
+    try:
+        stored_scope = json.loads(consent.scope)
+    except (TypeError, json.JSONDecodeError):
+        stored_scope = None
+
+    if isinstance(stored_scope, dict) and stored_scope.get("level") in {
+        "anonymous",
+        "restricted",
+        "full_disclosure",
+    }:
+        level = stored_scope["level"]
+        fields = stored_scope.get("fields", [])
+        if not isinstance(fields, list):
+            fields = []
+        allowed_fields = {"name", "email", "phone", "department"}
+        fields = sorted(
+            {field for field in fields if isinstance(field, str)}
+            & allowed_fields
+        )
+        if level == "anonymous":
+            fields = []
+        elif level == "full_disclosure":
+            fields = sorted(allowed_fields)
+    else:
+        # Prior Boolean consent covered name, email, and phone only.
+        level = "full_disclosure" if consent.granted else "anonymous"
+        fields = ["name", "email", "phone"] if consent.granted else []
+
+    granted_at = consent.granted_at
+    if granted_at is not None and granted_at.tzinfo is None:
+        granted_at = granted_at.replace(tzinfo=timezone.utc)
+    active = bool(
+        consent.granted
+        and consent.withdrawn_at is None
+        and granted_at is not None
+        and granted_at <= datetime.now(timezone.utc)
+    )
+    return {"level": level, "fields": fields, "active": active}
+
+
+def student_case_to_dict(db: Session, case, viewer):
+    data = case_to_dict(case, viewer)
+    department_consent = department_consent_to_dict(db, case)
+    data.update(
+        {
+            "department": case.department,
+            "department_identity_consent": department_consent["active"],
+            "department_consent": department_consent,
+            "progress_updates": get_case_progress_updates(db, case.id),
+        }
+    )
+    return data
+
+
+def redact_known_student_identity(text: str, student) -> str:
+    if student is None:
+        return text
+    identity_values = sorted(
+        {
+            value.strip()
+            for value in (
+                student.name,
+                student.email,
+                student.phone,
+                student.department,
+            )
+            if value and value.strip()
+        },
+        key=len,
+        reverse=True,
+    )
+    for value in identity_values:
+        text = re.sub(re.escape(value), "[redacted]", text, flags=re.IGNORECASE)
+    return text
+
+
+def coordinator_case_to_dict(db: Session, case):
+    student = (
+        db.query(models.User)
+        .filter(models.User.id == case.student_id)
+        .first()
+    )
+    department_consent = department_consent_to_dict(db, case)
     return {
         "id": case.id,
         "category": case.category,
+        "title": case.title,
+        "description": case.description,
         "status": case.status,
         "department": case.department,
+        "department_identity_consent": department_consent["active"],
+        "department_consent": department_consent,
+        "student_name": student.name if student is not None else None,
+        "student_email": student.email if student is not None else None,
+        "student_phone": student.phone if student is not None else None,
+        "student_department": (
+            student.department if student is not None else None
+        ),
         "created_at": case.created_at,
+        "progress_updates": get_case_progress_updates(db, case.id),
     }
 
-def department_case_to_dict(case):
-    return {
+
+def department_case_to_dict(db: Session, case):
+    student = (
+        db.query(models.User)
+        .filter(models.User.id == case.student_id)
+        .first()
+    )
+    consent = department_consent_to_dict(db, case)
+    consent_fields = set(consent["fields"]) if consent["active"] else set()
+    data = {
         "id": case.id,
         "category": case.category,
+        "title": case.title,
+        "description": case.description,
         "status": case.status,
+        "department_identity_consent": consent["active"],
+        "department_consent": consent,
+        "coordinator_available": case.assigned_coordinator_id is not None,
         "created_at": case.created_at,
+    }
+    if student is not None and consent["active"]:
+        if "name" in consent_fields:
+            data["student_name"] = student.name
+        if "email" in consent_fields:
+            data["student_email"] = student.email
+        if "phone" in consent_fields and student.phone:
+            data["student_phone"] = student.phone
+        if "department" in consent_fields and student.department:
+            data["student_department"] = student.department
+    if student is not None:
+        data["title"] = redact_unselected_student_identity(
+            data["title"], student, consent_fields
+        )
+        data["description"] = redact_unselected_student_identity(
+            data["description"], student, consent_fields
+        )
+    return data
+
+
+def redact_unselected_student_identity(text: str, student, allowed_fields):
+    profile_fields = {
+        "name": student.name,
+        "email": student.email,
+        "phone": student.phone,
+        "department": student.department,
+    }
+    for field, value in profile_fields.items():
+        if field not in allowed_fields and value:
+            text = re.sub(
+                re.escape(value.strip()),
+                "[redacted]",
+                text,
+                flags=re.IGNORECASE,
+            )
+    return text
+
+
+def student_case_action_request_to_dict(action_request):
+    return {
+        "id": action_request.id,
+        "case_id": action_request.case_id,
+        "request_type": action_request.request_type,
+        "message": action_request.message,
+        "status": action_request.status,
+        "created_at": action_request.created_at,
+        "handled_at": action_request.handled_at,
     }
 
 
-def admin_case_to_dict(case, coordinator_email=None):
+def admin_case_to_dict(db: Session, case, coordinator_email=None):
+    student = (
+        db.query(models.User)
+        .filter(models.User.id == case.student_id)
+        .first()
+    )
+    title = redact_admin_content(case.title, student)
+    summary = redact_admin_content(case.description, student)
+    summary = summary[:500]
+    if len(case.description) > 500:
+        summary = summary.rstrip() + "..."
     return {
         "id": case.id,
         "category": case.category,
+        "title": title,
+        "summary": summary,
         "status": case.status,
         "created_at": case.created_at,
         "assigned_coordinator_id": case.assigned_coordinator_id,
         "assigned_coordinator_email": coordinator_email,
         "department": case.department,
     }
+
+
+def redact_admin_content(text: str, student) -> str:
+    text = redact_known_student_identity(text, student)
+    text = re.sub(
+        r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",
+        "[redacted]",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(
+        r"(?<!\w)(?:\+?\d[\d\s().-]{7,}\d)(?!\w)",
+        "[redacted]",
+        text,
+    )
 
 
 # ---------------- HOME ----------------
@@ -552,6 +857,8 @@ def register(
         name=name,
         email=email,
         phone=data.phone,
+        department_course=data.department_course,
+        current_semester=data.current_semester,
         password_hash=hash_password(data.password),
         otp_hash=hash_otp(email, otp),
         expires_at=now + timedelta(seconds=expiration_seconds),
@@ -679,6 +986,8 @@ def verify_email(
         name=pending.name,
         email=email,
         phone=pending.phone,
+        department_course=pending.department_course,
+        current_semester=pending.current_semester,
         password_hash=pending.password_hash,
         role=Role.STUDENT.value,
         department=None,
@@ -989,12 +1298,65 @@ def create_case(
         status="submitted",
         identity_mode=case.identity_mode,
     )
-
     db.add(new_case)
+    db.flush()
+    if case.department_consent_level == "restricted":
+        consent_fields = sorted(set(case.department_consent_fields))
+    elif case.department_consent_level == "full_disclosure":
+        consent_fields = ["name", "email", "phone", "department"]
+    else:
+        consent_fields = []
+    consent_granted = bool(consent_fields)
+    consent_at = datetime.now(timezone.utc) if consent_granted else None
+    consent_scope = json.dumps(
+        {
+            "level": case.department_consent_level,
+            "fields": consent_fields,
+        },
+        separators=(",", ":"),
+    )
+    db.add(
+        models.CaseConsent(
+            case_id=new_case.id,
+            granted_by_user_id=current_user.id,
+            purpose=DepartmentIdentityConsentPurpose,
+            recipient=DepartmentIdentityConsentRecipient,
+            scope=consent_scope,
+            granted=consent_granted,
+            granted_at=consent_at,
+            withdrawn_at=None,
+        )
+    )
+    db.add(
+        models.CaseDisclosureAudit(
+            case_id=new_case.id,
+            actor_user_id=current_user.id,
+            recipient=DepartmentIdentityConsentRecipient,
+            purpose=DepartmentIdentityConsentPurpose,
+            decision=(
+                "consent_granted" if consent_granted else "consent_denied"
+            ),
+            reason=(
+                f"Student selected {case.department_consent_level} "
+                "department identity disclosure."
+                if consent_granted
+                else "Student did not consent to identity disclosure."
+            ),
+        )
+    )
+    db.add(
+        models.CaseProgressUpdate(
+            case_id=new_case.id,
+            author_user_id=current_user.id,
+            update_type="status",
+            title="Case submitted",
+            message="Your case was submitted successfully.",
+        )
+    )
     db.commit()
     db.refresh(new_case)
 
-    return case_to_dict(new_case, current_user)
+    return student_case_to_dict(db, new_case, current_user)
 
 
 # Students can list their own cases only.
@@ -1028,7 +1390,10 @@ def get_cases(
 
     cases = query.offset(skip).limit(limit).all()
 
-    return [case_to_dict(case, current_user) for case in cases]
+    return [
+        student_case_to_dict(db, case, current_user)
+        for case in cases
+    ]
 
 
 # Students can count their own cases only.
@@ -1162,6 +1527,17 @@ def assign_case(
                     "The case assignment was not changed."
                 ),
             ) from None
+        if previous_coordinator_id != coordinator.id:
+            db.add(
+                models.CaseProgressUpdate(
+                    case_id=case.id,
+                    author_user_id=current_user.id,
+                    update_type="assignment",
+                    title="Coordinator assigned",
+                    message="A Coordinator has been assigned to your case.",
+                )
+            )
+            db.commit()
         db.refresh(case)
         return {
             "message": "Case assigned and coordinator notified.",
@@ -1169,7 +1545,7 @@ def assign_case(
             "coordinator_email": coordinator_email,
             "login_url": f"{base_url}/login",
             "dashboard_url": f"{base_url}/dashboard/coordinator",
-            "case": admin_case_to_dict(case, coordinator_email),
+            "case": admin_case_to_dict(db, case, coordinator_email),
         }
 
     raw_token = generate_invitation_token()
@@ -1234,7 +1610,7 @@ def assign_case(
         "coordinator_email": coordinator_email,
         "login_url": f"{base_url}/login",
         "dashboard_url": f"{base_url}/dashboard/coordinator",
-        "case": admin_case_to_dict(case),
+        "case": admin_case_to_dict(db, case),
     }
 
 
@@ -1308,6 +1684,15 @@ def accept_coordinator_invitation(
     db.flush()
     case.assigned_coordinator_id = coordinator.id
     invitation.accepted_at = now
+    db.add(
+        models.CaseProgressUpdate(
+            case_id=case.id,
+            author_user_id=coordinator.id,
+            update_type="assignment",
+            title="Coordinator assigned",
+            message="A Coordinator has been assigned to your case.",
+        )
+    )
     db.commit()
 
     try:
@@ -1381,14 +1766,27 @@ def assign_case_department(
             detail="Department must have a provisioned department staff account.",
         )
 
+    department_changed = case.department != canonical_department
     case.department = canonical_department
+    if department_changed:
+        db.add(
+            models.CaseProgressUpdate(
+                case_id=case.id,
+                author_user_id=current_user.id,
+                update_type="routing",
+                title="Department assigned",
+                message=(
+                    f"Your case has been routed to {canonical_department}."
+                ),
+            )
+        )
     db.commit()
     db.refresh(case)
 
     serialized_case = (
-        coordinator_case_to_dict(case)
+        coordinator_case_to_dict(db, case)
         if current_user.role == Role.COORDINATOR.value
-        else admin_case_to_dict(case)
+        else admin_case_to_dict(db, case)
     )
     return {
         "message": "Case routed to department successfully.",
@@ -1396,13 +1794,7 @@ def assign_case_department(
     }
 
 
-@app.get("/api/v1/departments")
-def get_authorized_departments(
-    db: Session = Depends(get_db),
-    _: models.User = Depends(
-        require_roles(Role.ADMIN.value, Role.COORDINATOR.value)
-    ),
-):
+def get_provisioned_departments(db: Session) -> list[str]:
     provisioned_departments = (
         db.query(models.User.department)
         .filter(
@@ -1421,6 +1813,16 @@ def get_authorized_departments(
                 normalized_department,
             )
     return sorted(departments_by_key.values(), key=str.casefold)
+
+
+@app.get("/api/v1/departments")
+def get_authorized_departments(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(
+        require_roles(Role.ADMIN.value, Role.COORDINATOR.value)
+    ),
+):
+    return get_provisioned_departments(db)
 
 
 @app.get("/api/v1/admin/cases")
@@ -1453,6 +1855,7 @@ def get_admin_cases(
     )
     return [
         admin_case_to_dict(
+            db,
             case,
             coordinator_emails.get(case.assigned_coordinator_id),
         )
@@ -1503,7 +1906,7 @@ def get_assigned_cases(
 
     # Query is scoped to this coordinator's assignments; protected text and
     # student identity are omitted from the response.
-    return [coordinator_case_to_dict(case) for case in cases]
+    return [coordinator_case_to_dict(db, case) for case in cases]
 
 
 @app.get("/api/v1/coordinator/cases/{case_id}")
@@ -1527,7 +1930,7 @@ def get_assigned_case(
             status_code=404,
             detail="Assigned case not found.",
         )
-    return coordinator_case_to_dict(case)
+    return coordinator_case_to_dict(db, case)
 
 
 @app.patch("/api/v1/coordinator/cases/{case_id}/status")
@@ -1556,15 +1959,137 @@ def update_assigned_case_status(
             detail="Assigned case not found."
         )
 
-    case.status = payload.status
-
+    if case.status != payload.status:
+        case.status = payload.status
+        if payload.status == "closed":
+            update_type = "closure"
+            title = "Case closed"
+            message = payload.closure_outcome.strip()
+        else:
+            update_type = "status"
+            title = {
+                "in_review": "Review started",
+                "in_progress": "Case in progress",
+            }[payload.status]
+            message = title + "."
+        db.add(
+            models.CaseProgressUpdate(
+                case_id=case.id,
+                author_user_id=current_user.id,
+                update_type=update_type,
+                title=title,
+                message=message,
+            )
+        )
     db.commit()
     db.refresh(case)
 
     return {
         "message": "Case status updated successfully.",
-        "case": coordinator_case_to_dict(case),
+        "case": coordinator_case_to_dict(db, case),
     }
+
+
+@app.post("/api/v1/coordinator/cases/{case_id}/updates", status_code=201)
+def create_coordinator_progress_update(
+    case_id: int,
+    payload: CoordinatorProgressUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_roles(Role.COORDINATOR.value)
+    ),
+    _: None = Depends(require_csrf_token),
+):
+    case = (
+        db.query(models.Case)
+        .filter(
+            models.Case.id == case_id,
+            models.Case.assigned_coordinator_id == current_user.id,
+        )
+        .first()
+    )
+    if case is None:
+        raise HTTPException(status_code=404, detail="Assigned case not found.")
+
+    update = models.CaseProgressUpdate(
+        case_id=case.id,
+        author_user_id=current_user.id,
+        update_type="follow_up",
+        title=payload.title.strip(),
+        message=payload.message.strip(),
+    )
+    db.add(update)
+    db.commit()
+    db.refresh(update)
+    return {"update": case_progress_to_dict(update)}
+
+
+@app.get("/api/v1/coordinator/action-requests")
+def get_coordinator_action_requests(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_roles(Role.COORDINATOR.value)
+    ),
+):
+    requests = (
+        db.query(models.DepartmentActionRequest)
+        .join(
+            models.Case,
+            models.Case.id == models.DepartmentActionRequest.case_id,
+        )
+        .filter(
+            models.DepartmentActionRequest.coordinator_id == current_user.id,
+            models.Case.assigned_coordinator_id == current_user.id,
+        )
+        .order_by(
+            models.DepartmentActionRequest.created_at.desc(),
+            models.DepartmentActionRequest.id.desc(),
+        )
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return [
+        student_case_action_request_to_dict(action_request)
+        for action_request in requests
+    ]
+
+
+@app.patch("/api/v1/coordinator/action-requests/{request_id}")
+def decide_coordinator_action_request(
+    request_id: int,
+    payload: DepartmentActionRequestDecision,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_roles(Role.COORDINATOR.value)
+    ),
+    _: None = Depends(require_csrf_token),
+):
+    action_request = (
+        db.query(models.DepartmentActionRequest)
+        .join(
+            models.Case,
+            models.Case.id == models.DepartmentActionRequest.case_id,
+        )
+        .filter(
+            models.DepartmentActionRequest.id == request_id,
+            models.DepartmentActionRequest.coordinator_id == current_user.id,
+            models.Case.assigned_coordinator_id == current_user.id,
+        )
+        .first()
+    )
+    if action_request is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Coordinator action request not found.",
+        )
+    action_request.status = payload.status
+    action_request.handled_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(action_request)
+    return student_case_action_request_to_dict(action_request)
 
 
 @app.get("/api/v1/department/cases")
@@ -1584,7 +2109,7 @@ def get_department_cases(
         .limit(limit)
         .all()
     )
-    return [department_case_to_dict(case) for case in cases]
+    return [department_case_to_dict(db, case) for case in cases]
 
 
 @app.get("/api/v1/department/cases/{case_id}")
@@ -1608,7 +2133,52 @@ def get_department_case(
             status_code=404,
             detail="Department case not found.",
         )
-    return department_case_to_dict(case)
+    return department_case_to_dict(db, case)
+
+
+@app.post(
+    "/api/v1/department/cases/{case_id}/action-requests",
+    status_code=201,
+)
+def create_department_action_request(
+    case_id: int,
+    payload: DepartmentActionRequestCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_roles(Role.DEPARTMENT_STAFF.value)
+    ),
+    _: None = Depends(require_csrf_token),
+):
+    case = (
+        db.query(models.Case)
+        .filter(
+            models.Case.id == case_id,
+            models.Case.department == current_user.department,
+        )
+        .first()
+    )
+    if case is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Department case not found.",
+        )
+    if case.assigned_coordinator_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This case has no assigned coordinator to contact.",
+        )
+    action_request = models.DepartmentActionRequest(
+        case_id=case.id,
+        coordinator_id=case.assigned_coordinator_id,
+        sender_user_id=current_user.id,
+        request_type=payload.request_type,
+        message=payload.message.strip(),
+        status="open",
+    )
+    db.add(action_request)
+    db.commit()
+    db.refresh(action_request)
+    return student_case_action_request_to_dict(action_request)
 
 
 @app.get("/api/v1/notifications")
@@ -1658,7 +2228,7 @@ def get_case(
             detail="Case not found.",
         )
 
-    return case_to_dict(case, current_user)
+    return student_case_to_dict(db, case, current_user)
 
 
 # Updates remain disabled until coordinator scope is implemented.
@@ -1707,7 +2277,7 @@ def update_case_identity(
 
     return {
         "message": "Identity mode updated successfully.",
-        "case": case_to_dict(case, current_user),
+        "case": student_case_to_dict(db, case, current_user),
     }
 
 @app.post("/api/v1/cases/{case_id}/consent", status_code=201)
@@ -1718,15 +2288,6 @@ def grant_case_consent(
     current_user: models.User = Depends(require_roles(Role.STUDENT.value)),
     _: None = Depends(require_csrf_token),
 ):
-    purpose = payload.purpose.strip()
-    recipient_email = payload.recipient.strip().lower()
-    scope = payload.scope.strip()
-    if not purpose or not recipient_email or not scope:
-        raise HTTPException(
-            status_code=422,
-            detail="Consent recipient, purpose, and scope are required.",
-        )
-
     case = (
         db.query(models.Case)
         .filter(
@@ -1739,58 +2300,13 @@ def grant_case_consent(
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found.")
 
-    if case.identity_mode not in {"identified", "restricted"}:
-        raise HTTPException(
-            status_code=403,
-            detail="Identity disclosure consent cannot be granted for an anonymous case.",
-        )
-
-    # Consent is tied to the specific coordinator currently assigned to this case.
-    coordinator = (
-        db.query(models.User)
-        .join(
-            models.Case,
-            models.Case.assigned_coordinator_id == models.User.id,
-        )
-        .filter(
-            models.Case.id == case.id,
-            models.User.role == "coordinator",
-            models.User.email == recipient_email,
-        )
-        .first()
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "Identity consent is recorded at submission for the assigned "
+            "department. Assigned Coordinators already have case-scoped access."
+        ),
     )
-    if coordinator is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Consent recipient must be the coordinator assigned to this case.",
-        )
-
-    consent = models.CaseConsent(
-        case_id=case.id,
-        granted_by_user_id=current_user.id,
-        purpose=purpose,
-        recipient=coordinator.email.strip().lower(),
-        scope=scope,
-        granted=True,
-        granted_at=datetime.now(timezone.utc),
-        withdrawn_at=None,
-    )
-
-    db.add(consent)
-    db.add(
-        models.CaseDisclosureAudit(
-            case_id=case.id,
-            actor_user_id=current_user.id,
-            recipient=coordinator.email.strip().lower(),
-            purpose=purpose,
-            decision="consent_granted",
-            reason="Student explicitly granted consent.",
-        )
-    )
-
-    db.commit()
-
-    return {"message": "Consent recorded successfully."}
 
 
 @app.patch("/api/v1/cases/{case_id}/consent/{consent_id}/withdraw")
@@ -1854,7 +2370,11 @@ def get_case_consent(
 
     consents = (
         db.query(models.CaseConsent)
-        .filter(models.CaseConsent.case_id == case_id)
+        .filter(
+            models.CaseConsent.case_id == case_id,
+            models.CaseConsent.recipient
+            == DepartmentIdentityConsentRecipient,
+        )
         .order_by(models.CaseConsent.created_at.desc())
         .all()
     )
@@ -1871,51 +2391,6 @@ def get_case_consent(
         }
         for consent in consents
     ]
-def check_case_disclosure_consent(
-    db: Session,
-    case_id: int,
-    recipient: str,
-    purpose: str,
-    scope: str,
-) -> bool:
-    # Select the newest record first, including withdrawn records. Otherwise,
-    # an older grant could incorrectly become active after a later withdrawal.
-    consent = (
-        db.query(models.CaseConsent)
-        .join(
-            models.Case,
-            models.CaseConsent.case_id == models.Case.id,
-        )
-        .filter(
-            models.CaseConsent.case_id == case_id,
-            models.CaseConsent.recipient == recipient,
-            models.CaseConsent.purpose == purpose,
-            models.CaseConsent.scope == scope,
-            models.CaseConsent.granted_by_user_id
-            == models.Case.student_id,
-        )
-        .order_by(
-            models.CaseConsent.created_at.desc(),
-            models.CaseConsent.id.desc(),
-        )
-        .first()
-    )
-
-    case = db.query(models.Case).filter(models.Case.id == case_id).first()
-    granted_at = consent.granted_at if consent is not None else None
-    if granted_at is not None and granted_at.tzinfo is None:
-        granted_at = granted_at.replace(tzinfo=timezone.utc)
-
-    return bool(
-        case is not None
-        and case.identity_mode in {"identified", "restricted"}
-        and consent is not None
-        and consent.granted
-        and granted_at is not None
-        and granted_at <= datetime.now(timezone.utc)
-        and consent.withdrawn_at is None
-    )
-
 @app.post("/api/v1/coordinator/cases/{case_id}/identity-disclosure")
 def disclose_case_identity_to_coordinator(
     case_id: int,
@@ -1926,17 +2401,6 @@ def disclose_case_identity_to_coordinator(
     ),
     _: None = Depends(require_csrf_token),
 ):
-    """Return case-owner identity only to the assigned coordinator with active consent."""
-
-    recipient = current_user.email.strip().lower()
-    purpose = payload.purpose.strip()
-    scope = payload.scope.strip()
-    if not purpose or not scope:
-        raise HTTPException(
-            status_code=422,
-            detail="Disclosure purpose and scope are required.",
-        )
-
     case = (
         db.query(models.Case)
         .filter(
@@ -1948,72 +2412,27 @@ def disclose_case_identity_to_coordinator(
     if case is None:
         raise HTTPException(status_code=404, detail="Assigned case not found.")
 
-    # Match the latest consent for this exact case, coordinator, purpose and scope.
-    consent = (
-        db.query(models.CaseConsent)
-        .filter(
-            models.CaseConsent.case_id == case_id,
-            models.CaseConsent.granted_by_user_id == case.student_id,
-            models.CaseConsent.recipient == recipient,
-            models.CaseConsent.purpose == purpose,
-            models.CaseConsent.scope == scope,
-        )
-        .order_by(
-            models.CaseConsent.created_at.desc(),
-            models.CaseConsent.id.desc(),
-        )
-        .first()
-    )
-
-    granted_at = consent.granted_at if consent is not None else None
-    if granted_at is not None and granted_at.tzinfo is None:
-        granted_at = granted_at.replace(tzinfo=timezone.utc)
-
-    allowed = bool(
-        case.identity_mode in {"identified", "restricted"}
-        and consent is not None
-        and consent.granted
-        and granted_at is not None
-        and granted_at <= datetime.now(timezone.utc)
-        and consent.withdrawn_at is None
-    )
-
-    record_disclosure_decision(
-        db=db,
-        case_id=case_id,
-        actor_user_id=current_user.id,
-        recipient=recipient,
-        purpose=purpose,
-        allowed=allowed,
-        reason=(
-            "Active consent matched coordinator, purpose, and scope."
-            if allowed
-            else "Disclosure denied: no active matching consent for this coordinator, purpose, and scope."
-        ),
-    )
-
-    if not allowed:
-        raise HTTPException(
-            status_code=403,
-            detail="Disclosure denied: active consent is required.",
-        )
-
     student = (
         db.query(models.User)
         .filter(models.User.id == case.student_id)
         .first()
     )
     if student is None:
-        # Do not return case data if the linked owner record is missing.
-        raise HTTPException(status_code=404, detail="Case owner not found.")
-
+        raise HTTPException(status_code=404, detail="Student not found.")
+    record_disclosure_decision(
+        db=db,
+        case_id=case_id,
+        actor_user_id=current_user.id,
+        recipient=current_user.email.strip().lower(),
+        purpose=payload.purpose.strip(),
+        allowed=True,
+        reason="Assigned Coordinator accessed the case identity details.",
+    )
     return {
-        "case_id": case.id,
         "student_name": student.name,
         "student_email": student.email,
-        "purpose": purpose,
-        "scope": scope,
-        "message": "Identity disclosure authorized by active consent.",
+        "student_phone": student.phone,
+        "student_department": student.department,
     }
 
 

@@ -630,6 +630,8 @@ def test_public_registration_cannot_create_privileged_roles(
             "name": "Attempted Admin",
             "email": email,
             "phone": "9876543210",
+            "department_course": "Counselling",
+            "current_semester": 3,
             "password": "TestPassword123!",
             "confirm_password": "TestPassword123!",
             "role": role,
@@ -797,6 +799,8 @@ def _start_pending_registration(
             "name": "New Student",
             "email": email,
             "phone": "+91 98765 43210",
+            "department_course": "Counselling",
+            "current_semester": 3,
             "password": "NewStudentPassword123!",
             "confirm_password": "NewStudentPassword123!",
             "role": "admin",
@@ -837,12 +841,94 @@ def test_registration_accepts_configured_edu_in_domains(
             "name": "Another College Student",
             "email": "student@another-college.edu.in",
             "phone": "9876543210",
+            "department_course": "Counselling",
+            "current_semester": 2,
             "password": "ValidPassword123!",
             "confirm_password": "ValidPassword123!",
         },
     )
     assert response.status_code == 202
     assert response.json()["resend_cooldown_seconds"] == 60
+
+
+def test_registration_accepts_student_entered_department_course(
+    test_client,
+    monkeypatch,
+):
+    import main
+
+    sent_emails = []
+    monkeypatch.setattr(
+        main,
+        "send_verification_email",
+        lambda *args: sent_emails.append(args),
+    )
+    response = test_client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "Student Entered Course",
+            "email": "student.course@college.example.edu.in",
+            "phone": "9876543210",
+            "department_course": "Applied Robotics and AI",
+            "current_semester": 2,
+            "password": "ValidPassword123!",
+            "confirm_password": "ValidPassword123!",
+        },
+    )
+
+    assert response.status_code == 202
+    assert len(sent_emails) == 1
+    from auth.dependencies import get_db
+    import models
+
+    db = next(app.dependency_overrides[get_db]())
+    try:
+        pending = db.query(models.PendingEmailVerification).filter_by(
+            email="student.course@college.example.edu.in"
+        ).one()
+        assert pending.department_course == "Applied Robotics and AI"
+        assert pending.current_semester == 2
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("department_course", ["", "   ", "x" * 101])
+def test_registration_rejects_empty_or_overlong_department_course(
+    test_client,
+    department_course,
+):
+    response = test_client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "Invalid Department",
+            "email": "invalid.department@college.example.edu.in",
+            "phone": "9876543210",
+            "department_course": department_course,
+            "current_semester": 2,
+            "password": "ValidPassword123!",
+            "confirm_password": "ValidPassword123!",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("semester", [0, 9, "2"])
+def test_registration_rejects_invalid_semester(test_client, semester):
+    response = test_client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "Invalid Semester",
+            "email": "invalid.semester@college.example.edu.in",
+            "phone": "9876543210",
+            "department_course": "Counselling",
+            "current_semester": semester,
+            "password": "ValidPassword123!",
+            "confirm_password": "ValidPassword123!",
+        },
+    )
+
+    assert response.status_code == 422
 
 
 @pytest.mark.parametrize(
@@ -955,6 +1041,8 @@ def test_registration_duplicate_account_is_generic_and_no_resend(
             "name": "Duplicate Student",
             "email": test_student["email"],
             "phone": "9876543210",
+            "department_course": "Counselling",
+            "current_semester": 2,
             "password": "NewStudentPassword123!",
             "confirm_password": "NewStudentPassword123!",
         },
@@ -982,6 +1070,8 @@ def test_otp_delivery_failure_does_not_activate_account(
             "name": "New Student",
             "email": "delivery.failure@college.example.edu.in",
             "phone": "9876543210",
+            "department_course": "Counselling",
+            "current_semester": 2,
             "password": "NewStudentPassword123!",
             "confirm_password": "NewStudentPassword123!",
         },
@@ -1021,6 +1111,8 @@ def test_missing_smtp_configuration_does_not_create_pending_registration(
             "name": "No SMTP",
             "email": "no.smtp@college.example.edu.in",
             "phone": "9876543210",
+            "department_course": "Counselling",
+            "current_semester": 2,
             "password": "NewStudentPassword123!",
             "confirm_password": "NewStudentPassword123!",
         },
@@ -1174,6 +1266,11 @@ def test_email_otp_verifies_once_and_only_then_allows_login(
     assert profile.json()["user"]["phone"] == "+919876543210"
     assert profile.json()["user"]["role"] == "student"
     assert profile.json()["user"]["department"] is None
+    assert profile.json()["user"]["department_course"] == "Counselling"
+    assert profile.json()["user"]["current_semester"] == 3
+    me = test_client.get("/api/v1/auth/me")
+    assert me.json()["department_course"] == "Counselling"
+    assert me.json()["current_semester"] == 3
     assert test_client.post(
         "/api/v1/auth/login",
         json={"email": email, "password": "NewStudentPassword123!"},
@@ -1212,6 +1309,8 @@ def test_complete_registration_otp_flow_with_mocked_smtp(
             "name": "Complete Flow Student",
             "email": email,
             "phone": "9876543210",
+            "department_course": "Counselling",
+            "current_semester": 4,
             "password": "CompleteFlowPassword123!",
             "confirm_password": "CompleteFlowPassword123!",
         },
@@ -1265,6 +1364,8 @@ def test_complete_registration_otp_flow_with_mocked_smtp(
             "name": "Expired Flow Student",
             "email": expired_email,
             "phone": "9876543210",
+            "department_course": "Counselling",
+            "current_semester": 4,
             "password": "ExpiredFlowPassword123!",
             "confirm_password": "ExpiredFlowPassword123!",
         },
@@ -1795,8 +1896,10 @@ def test_new_coordinator_invitation_is_hashed_single_use_and_assigns_case(
     assert response.status_code == 200
     assert response.json()["assignment_status"] == "invitation_sent"
     assert "token" not in response.json()
-    assert "Student private title" not in response.text
-    assert "Student protected report details." not in response.text
+    assert response.json()["case"]["title"] == "Student private title"
+    assert response.json()["case"]["summary"] == "Student protected report details."
+    assert "description" not in response.json()["case"]
+    assert test_student["email"] not in response.text
     assert len(sent_invitations) == 1
     email, token, case_id, category = sent_invitations[0]
     assert (email, case_id, category) == (
@@ -1850,8 +1953,10 @@ def test_new_coordinator_invitation_is_hashed_single_use_and_assigns_case(
     ).json()["user"]["role"] == "coordinator"
     assigned_cases = test_client.get("/api/v1/coordinator/cases")
     assert [item["id"] for item in assigned_cases.json()] == [case_id]
-    assert "Student private title" not in assigned_cases.text
-    assert "Student protected report details." not in assigned_cases.text
+    assert assigned_cases.json()[0]["title"] == "Student private title"
+    assert assigned_cases.json()[0]["description"] == "Student protected report details."
+    assert assigned_cases.json()[0]["student_email"] == test_student["email"]
+    assert assigned_cases.json()[0]["student_name"] == "Test Student"
 
     replay = test_client.post(
         "/api/v1/coordinator-invitations/accept",
@@ -2173,11 +2278,12 @@ def test_coordinator_scope_and_identity_fields(
         f"/api/v1/coordinator/cases/{case_id}",
     )
     assert response.status_code == 200
-    assert "description" not in response.json()
-    assert "title" not in response.json()
-    assert "Sensitive student report description." not in response.text
+    assert response.json()["description"] == "Sensitive student report description."
+    assert response.json()["title"] == "Private student title"
+    assert response.json()["department_identity_consent"] is False
     assert "student_id" not in response.json()
-    assert "student_email" not in response.json()
+    assert response.json()["student_name"] == "Test Student"
+    assert response.json()["student_email"] == test_student["email"]
 
 
 def test_test_database_uses_sqlite():
@@ -2279,7 +2385,7 @@ def test_privileged_profile_update_cannot_change_role(
     assert test_client.get("/api/v1/auth/me").json()["role"] == role
 
 
-def test_anonymous_case_cannot_disclose_identity_even_with_consent(
+def test_anonymous_department_consent_still_allows_assigned_coordinator_identity(
     test_client,
     test_student,
 ):
@@ -2327,7 +2433,7 @@ def test_anonymous_case_cannot_disclose_identity_even_with_consent(
         },
         headers={"X-CSRF-Token": student_csrf},
     )
-    assert consent.status_code == 201
+    assert consent.status_code == 403
 
     anonymous_mode = test_client.patch(
         f"/api/v1/cases/{case['id']}/identity",
@@ -2359,7 +2465,9 @@ def test_anonymous_case_cannot_disclose_identity_even_with_consent(
         },
         headers={"X-CSRF-Token": coordinator_csrf},
     )
-    assert disclosure.status_code == 403
+    assert disclosure.status_code == 200
+    assert disclosure.json()["student_name"] == "Test Student"
+    assert disclosure.json()["student_email"] == test_student["email"]
 
     admin_csrf = _login_and_get_csrf(
         test_client,
@@ -2446,7 +2554,11 @@ def test_department_assignment_and_isolation_redact_student_data(
     staff_csrf = staff_login.json()["csrf_token"]
     cases = test_client.get("/api/v1/department/cases").json()
     assert [item["id"] for item in cases] == [case_one["id"]]
-    assert set(cases[0]) == {"id", "category", "status", "created_at"}
+    assert cases[0]["department_identity_consent"] is False
+    assert "student_email" not in cases[0]
+    assert "student_name" not in cases[0]
+    assert cases[0]["title"] == "Private identity title"
+    assert cases[0]["description"] == "Free text that department staff must not see."
     assert test_client.get(
         f"/api/v1/department/cases/{case_two['id']}"
     ).status_code == 404
@@ -2528,10 +2640,10 @@ def test_assigned_coordinator_routes_case_to_authorized_department(
     assert routed_case["department"] == "Counselling"
     assert routed_case["category"] == "academic"
     assert "assigned_coordinator_id" not in routed_case
-    assert "title" not in routed_case
-    assert "description" not in routed_case
+    assert routed_case["title"] == "Private routing title"
+    assert routed_case["description"] == "Confidential description is not visible to staff."
     assert "student_id" not in routed_case
-    assert "Confidential description" not in route.text
+    assert "Confidential description" in route.text
     assert test_client.get(
         f"/api/v1/coordinator/cases/{case['id']}"
     ).json()["department"] == "Counselling"
@@ -2680,9 +2792,10 @@ def test_department_rerouting_revokes_previous_department_access_and_preserves_c
     )
     assert department_case.status_code == 200
     assert department_case.json()["category"] == "wellbeing"
-    assert set(department_case.json()) == {"id", "category", "status", "created_at"}
-    assert "Department reassignment title" not in department_case.text
-    assert "must move without altering" not in department_case.text
+    assert department_case.json()["title"] == "Department reassignment title"
+    assert "must move without altering" in department_case.text
+    assert "student_email" not in department_case.json()
+    assert "student_name" not in department_case.json()
 
     from auth.dependencies import get_db
     import models
@@ -2696,7 +2809,142 @@ def test_department_rerouting_revokes_previous_department_access_and_preserves_c
         db.close()
 
 
-def test_admin_case_list_does_not_expose_identity_or_report_text(
+@pytest.mark.parametrize(
+    ("level", "selected_fields", "expected_fields"),
+    [
+        ("anonymous", [], set()),
+        ("restricted", ["email", "phone"], {"email", "phone"}),
+        (
+            "full_disclosure",
+            [],
+            {"name", "email", "phone", "department"},
+        ),
+    ],
+)
+def test_department_identity_disclosure_levels_are_enforced_everywhere(
+    test_client,
+    test_student,
+    level,
+    selected_fields,
+    expected_fields,
+):
+    from auth.dependencies import get_db
+    import models
+
+    student_csrf = _login_and_get_csrf(
+        test_client,
+        test_student["email"],
+        test_student["password"],
+    )
+    db = next(app.dependency_overrides[get_db]())
+    try:
+        student = (
+            db.query(models.User)
+            .filter(models.User.email == test_student["email"])
+            .one()
+        )
+        student.phone = "+919876543210"
+        student.department = "Student Studies"
+        db.commit()
+    finally:
+        db.close()
+
+    case = test_client.post(
+        "/api/v1/cases",
+        json={
+            "category": "academic",
+            "title": "Test Student's private concern",
+            "description": (
+                "Test Student can be contacted at "
+                f"{test_student['email']} or +919876543210 in Student Studies."
+            ),
+            "department_consent_level": level,
+            "department_consent_fields": selected_fields,
+        },
+        headers={"X-CSRF-Token": student_csrf},
+    ).json()
+    coordinator_id = _create_test_user(
+        "coordinator",
+        f"consent-level-{level}@example.com",
+    )
+    _create_test_user(
+        "department_staff",
+        f"consent-staff-{level}@example.com",
+        department="Academic Support",
+    )
+    _create_test_user("admin", f"consent-admin-{level}@example.com")
+    admin_csrf = _login_and_get_csrf(
+        test_client,
+        f"consent-admin-{level}@example.com",
+    )
+    assert test_client.patch(
+        f"/api/v1/cases/{case['id']}/assign",
+        json={"coordinator_id": coordinator_id},
+        headers={"X-CSRF-Token": admin_csrf},
+    ).status_code == 200
+    assert test_client.patch(
+        f"/api/v1/cases/{case['id']}/department",
+        json={"department": "Academic Support"},
+        headers={"X-CSRF-Token": admin_csrf},
+    ).status_code == 200
+
+    admin_case = test_client.get("/api/v1/admin/cases").json()[0]
+    for protected_value in (
+        "Test Student",
+        test_student["email"],
+        "+919876543210",
+        "Student Studies",
+    ):
+        assert protected_value not in str(admin_case)
+
+    coordinator_email = f"consent-level-{level}@example.com"
+    _login_and_get_csrf(test_client, coordinator_email)
+    coordinator_case = test_client.get(
+        f"/api/v1/coordinator/cases/{case['id']}"
+    ).json()
+    assert coordinator_case["student_name"] == "Test Student"
+    assert coordinator_case["student_email"] == test_student["email"]
+    assert coordinator_case["student_phone"] == "+919876543210"
+    assert coordinator_case["student_department"] == "Student Studies"
+    assert coordinator_case["department_consent"]["level"] == level
+    assert set(coordinator_case["department_consent"]["fields"]) == (
+        expected_fields
+        if level == "restricted"
+        else (
+            {"name", "email", "phone", "department"}
+            if level == "full_disclosure"
+            else set()
+        )
+    )
+
+    _login_and_get_csrf(test_client, f"consent-staff-{level}@example.com")
+    department_case = test_client.get(
+        f"/api/v1/department/cases/{case['id']}"
+    ).json()
+    visible_profile_fields = {
+        "name": "student_name",
+        "email": "student_email",
+        "phone": "student_phone",
+        "department": "student_department",
+    }
+    for profile_field, response_field in visible_profile_fields.items():
+        if profile_field in expected_fields:
+            assert response_field in department_case
+        else:
+            assert response_field not in department_case
+    for protected_value, profile_field in (
+        ("Test Student", "name"),
+        (test_student["email"], "email"),
+        ("+919876543210", "phone"),
+        ("Student Studies", "department"),
+    ):
+        if profile_field in expected_fields:
+            assert protected_value in department_case["description"]
+        else:
+            assert protected_value not in department_case["description"]
+
+
+def test_admin_case_list_includes_redacted_brief_without_identity(
     test_client,
     test_student,
 ):
@@ -2719,13 +2967,19 @@ def test_admin_case_list_does_not_expose_identity_or_report_text(
     _login_and_get_csrf(test_client, "safe-admin@example.com")
     cases = test_client.get("/api/v1/admin/cases")
     assert cases.status_code == 200
-    assert "title" not in cases.json()[0]
+    assert cases.json()[0]["category"] == "academic"
+    assert cases.json()[0]["title"] == "Hidden title"
+    assert cases.json()[0]["summary"] == "Hidden sensitive description."
+    assert cases.json()[0]["status"] == "submitted"
+    assert cases.json()[0]["created_at"]
     assert "description" not in cases.json()[0]
     assert "student_id" not in cases.json()[0]
+    assert "student_name" not in cases.json()[0]
+    assert "student_email" not in cases.json()[0]
     assert test_client.get("/api/v1/cases").status_code == 403
 
 
-def test_identity_disclosure_requires_active_exact_student_consent(
+def test_coordinator_identity_is_available_even_when_department_consent_granted(
     test_client,
     test_student,
 ):
@@ -2739,7 +2993,11 @@ def test_identity_disclosure_requires_active_exact_student_consent(
         json={
             "category": "academic",
             "title": "Consent case",
-            "description": "A private report with consent checks.",
+            "description": (
+                "A private report with consent checks. Test Student can be "
+                "contacted at student@college.example.edu.in."
+            ),
+            "department_identity_consent": True,
         },
         headers={"X-CSRF-Token": student_csrf},
     ).json()["id"]
@@ -2758,143 +3016,29 @@ def test_identity_disclosure_requires_active_exact_student_consent(
         headers={"X-CSRF-Token": admin_csrf},
     ).status_code == 200
 
-    purpose = "Wellbeing follow-up"
-    scope = "Contact student to arrange support"
-    student_csrf = _login_and_get_csrf(
-        test_client,
-        test_student["email"],
-        test_student["password"],
-    )
-    wrong_recipient = test_client.post(
-        f"/api/v1/cases/{case_id}/consent",
-        json={
-            "purpose": purpose,
-            "recipient": "someone-else@example.com",
-            "scope": scope,
-        },
-        headers={"X-CSRF-Token": student_csrf},
-    )
-    assert wrong_recipient.status_code == 400
-
-    consent = test_client.post(
-        f"/api/v1/cases/{case_id}/consent",
-        json={
-            "purpose": purpose,
-            "recipient": "consent-coordinator@example.com",
-            "scope": scope,
-        },
-        headers={"X-CSRF-Token": student_csrf},
-    )
-    assert consent.status_code == 201
-
-    admin_csrf = _login_and_get_csrf(
-        test_client,
-        "consent-admin@example.com",
-    )
-    admin_disclosure = test_client.post(
-        f"/api/v1/coordinator/cases/{case_id}/identity-disclosure",
-        json={"purpose": purpose, "scope": scope},
-        headers={"X-CSRF-Token": admin_csrf},
-    )
-    assert admin_disclosure.status_code == 403
-
     coordinator_csrf = _login_and_get_csrf(
         test_client,
         "consent-coordinator@example.com",
     )
-    wrong_purpose = test_client.post(
-        f"/api/v1/coordinator/cases/{case_id}/identity-disclosure",
-        json={"purpose": "Different purpose", "scope": scope},
-        headers={"X-CSRF-Token": coordinator_csrf},
+    coordinator_case = test_client.get(
+        f"/api/v1/coordinator/cases/{case_id}",
     )
-    assert wrong_purpose.status_code == 403
-    wrong_scope = test_client.post(
-        f"/api/v1/coordinator/cases/{case_id}/identity-disclosure",
-        json={"purpose": purpose, "scope": "Different scope"},
-        headers={"X-CSRF-Token": coordinator_csrf},
-    )
-    assert wrong_scope.status_code == 403
-
-    from auth.dependencies import get_db
-    import models
-
-    db = next(app.dependency_overrides[get_db]())
-    try:
-        consent_record = (
-            db.query(models.CaseConsent)
-            .filter(models.CaseConsent.case_id == case_id)
-            .first()
-        )
-        assert consent_record is not None
-        valid_granted_at = consent_record.granted_at
-        consent_record.granted_at = None
-        db.commit()
-    finally:
-        db.close()
-
-    invalid_grant_time = test_client.post(
-        f"/api/v1/coordinator/cases/{case_id}/identity-disclosure",
-        json={"purpose": purpose, "scope": scope},
-        headers={"X-CSRF-Token": coordinator_csrf},
-    )
-    assert invalid_grant_time.status_code == 403
-
-    db = next(app.dependency_overrides[get_db]())
-    try:
-        consent_record = (
-            db.query(models.CaseConsent)
-            .filter(models.CaseConsent.case_id == case_id)
-            .first()
-        )
-        assert consent_record is not None
-        consent_record.granted_at = valid_granted_at
-        db.commit()
-    finally:
-        db.close()
+    assert coordinator_case.status_code == 200
+    assert coordinator_case.json()["department_identity_consent"] is True
+    assert coordinator_case.json()["title"] == "Consent case"
+    assert "Test Student" in coordinator_case.json()["description"]
+    assert "student@college.example.edu.in" in coordinator_case.json()["description"]
+    assert "student_id" not in coordinator_case.json()
+    assert coordinator_case.json()["student_name"] == "Test Student"
+    assert coordinator_case.json()["student_email"] == test_student["email"]
 
     disclosure = test_client.post(
         f"/api/v1/coordinator/cases/{case_id}/identity-disclosure",
-        json={"purpose": purpose, "scope": scope},
+        json={"purpose": "Support", "scope": "Case response"},
         headers={"X-CSRF-Token": coordinator_csrf},
     )
     assert disclosure.status_code == 200
     assert disclosure.json()["student_email"] == test_student["email"]
-
-    student_csrf = _login_and_get_csrf(
-        test_client,
-        test_student["email"],
-        test_student["password"],
-    )
-    consent_id = test_client.get(
-        f"/api/v1/cases/{case_id}/consent"
-    ).json()[0]["id"]
-    withdrawn = test_client.patch(
-        f"/api/v1/cases/{case_id}/consent/{consent_id}/withdraw",
-        headers={"X-CSRF-Token": student_csrf},
-    )
-    assert withdrawn.status_code == 200
-
-    coordinator_csrf = _login_and_get_csrf(
-        test_client,
-        "consent-coordinator@example.com",
-    )
-    after_withdrawal = test_client.post(
-        f"/api/v1/coordinator/cases/{case_id}/identity-disclosure",
-        json={"purpose": purpose, "scope": scope},
-        headers={"X-CSRF-Token": coordinator_csrf},
-    )
-    assert after_withdrawal.status_code == 403
-    _login_and_get_csrf(
-        test_client,
-        test_student["email"],
-        test_student["password"],
-    )
-    audit = test_client.get(
-        f"/api/v1/cases/{case_id}/disclosure-audit"
-    )
-    assert audit.status_code == 200
-    decisions = {entry["decision"] for entry in audit.json()}
-    assert {"consent_granted", "denied", "allowed", "consent_withdrawn"} <= decisions
 
 
 def test_unsafe_case_assignment_rejects_invalid_csrf(
@@ -2908,3 +3052,294 @@ def test_unsafe_case_assignment_rejects_invalid_csrf(
         headers={"X-CSRF-Token": "incorrect-token"},
     )
     assert response.status_code == 403
+
+
+def test_department_identity_consent_is_case_specific_and_redacted(
+    test_client,
+    test_student,
+):
+    from auth.dependencies import get_db
+    import models
+
+    student_csrf = _login_and_get_csrf(
+        test_client,
+        test_student["email"],
+        test_student["password"],
+    )
+    db = next(app.dependency_overrides[get_db]())
+    try:
+        student = (
+            db.query(models.User)
+            .filter(models.User.email == test_student["email"])
+            .one()
+        )
+        student.phone = "+919876543210"
+        db.commit()
+    finally:
+        db.close()
+    granted_case = test_client.post(
+        "/api/v1/cases",
+        json={
+            "category": "wellbeing",
+            "title": "Consent granted case",
+            "description": "The assigned team may follow up with the student.",
+            "department_identity_consent": True,
+        },
+        headers={"X-CSRF-Token": student_csrf},
+    ).json()
+    denied_case = test_client.post(
+        "/api/v1/cases",
+        json={
+            "category": "academic",
+            "title": "Consent denied case",
+            "description": (
+                "The assigned team must not receive Test Student at "
+                "student@college.example.edu.in or +919876543210."
+            ),
+            "department_identity_consent": False,
+        },
+        headers={"X-CSRF-Token": student_csrf},
+    ).json()
+
+    coordinator_id = _create_test_user(
+        "coordinator",
+        "privacy-coordinator@example.com",
+    )
+    _create_test_user(
+        "department_staff",
+        "privacy-staff@example.com",
+        department="Counselling",
+    )
+    _create_test_user("admin", "privacy-admin@example.com")
+    admin_csrf = _login_and_get_csrf(test_client, "privacy-admin@example.com")
+    for case in (granted_case, denied_case):
+        assert test_client.patch(
+            f"/api/v1/cases/{case['id']}/assign",
+            json={"coordinator_id": coordinator_id},
+            headers={"X-CSRF-Token": admin_csrf},
+        ).status_code == 200
+        assert test_client.patch(
+            f"/api/v1/cases/{case['id']}/department",
+            json={"department": "Counselling"},
+            headers={"X-CSRF-Token": admin_csrf},
+        ).status_code == 200
+
+    _login_and_get_csrf(test_client, "privacy-staff@example.com")
+    department_cases = {
+        item["id"]: item
+        for item in test_client.get("/api/v1/department/cases").json()
+    }
+    granted_record = department_cases[granted_case["id"]]
+    assert granted_record["department_identity_consent"] is True
+    assert granted_record["student_name"] == "Test Student"
+    assert granted_record["student_email"] == test_student["email"]
+    assert granted_record["student_phone"] == "+919876543210"
+
+    denied_record = department_cases[denied_case["id"]]
+    assert denied_record["department_identity_consent"] is False
+    assert "student_name" not in denied_record
+    assert "student_email" not in denied_record
+    assert "student_phone" not in denied_record
+    assert "Test Student" not in denied_record["description"]
+    assert "+919876543210" not in denied_record["description"]
+    assert test_student["email"] not in test_client.get(
+        f"/api/v1/department/cases/{denied_case['id']}"
+    ).text
+
+    _login_and_get_csrf(test_client, "privacy-coordinator@example.com")
+    coordinator_cases = test_client.get("/api/v1/coordinator/cases").json()
+    coordinator_records = {
+        item["id"]: item for item in coordinator_cases
+    }
+    assert coordinator_records[granted_case["id"]][
+        "department_identity_consent"
+    ] is True
+    assert coordinator_records[denied_case["id"]][
+        "department_identity_consent"
+    ] is False
+    for item in coordinator_cases:
+        assert "student_id" not in item
+        assert item["student_name"] == "Test Student"
+        assert item["student_email"] == test_student["email"]
+        assert item["student_phone"] == "+919876543210"
+        assert "+919876543210" in str(item)
+        assert test_student["email"] in str(item)
+
+    student_csrf = _login_and_get_csrf(
+        test_client,
+        test_student["email"],
+        test_student["password"],
+    )
+    consent_id = test_client.get(
+        f"/api/v1/cases/{granted_case['id']}/consent"
+    ).json()[0]["id"]
+    assert test_client.patch(
+        f"/api/v1/cases/{granted_case['id']}/consent/{consent_id}/withdraw",
+        headers={"X-CSRF-Token": student_csrf},
+    ).status_code == 200
+    _login_and_get_csrf(test_client, "privacy-staff@example.com")
+    withdrawn_case = test_client.get(
+        f"/api/v1/department/cases/{granted_case['id']}"
+    ).json()
+    assert withdrawn_case["department_identity_consent"] is False
+    assert "student_email" not in withdrawn_case
+    assert "student_name" not in withdrawn_case
+    assert "student_phone" not in withdrawn_case
+
+
+def test_department_messages_coordinator_controls_and_student_progress(
+    test_client,
+    test_student,
+):
+    student_csrf = _login_and_get_csrf(
+        test_client,
+        test_student["email"],
+        test_student["password"],
+    )
+    case = test_client.post(
+        "/api/v1/cases",
+        json={
+            "category": "academic",
+            "title": "Progress tracking case",
+            "description": "This case exercises Coordinator-only case actions.",
+        },
+        headers={"X-CSRF-Token": student_csrf},
+    ).json()
+    coordinator_id = _create_test_user(
+        "coordinator",
+        "progress-coordinator@example.com",
+    )
+    _create_test_user(
+        "department_staff",
+        "progress-staff@example.com",
+        department="Academic Support",
+    )
+    _create_test_user("admin", "progress-admin@example.com")
+    admin_csrf = _login_and_get_csrf(test_client, "progress-admin@example.com")
+    assert test_client.patch(
+        f"/api/v1/cases/{case['id']}/assign",
+        json={"coordinator_id": coordinator_id},
+        headers={"X-CSRF-Token": admin_csrf},
+    ).status_code == 200
+    assert test_client.patch(
+        f"/api/v1/cases/{case['id']}/department",
+        json={"department": "Academic Support"},
+        headers={"X-CSRF-Token": admin_csrf},
+    ).status_code == 200
+
+    staff_csrf = _login_and_get_csrf(
+        test_client,
+        "progress-staff@example.com",
+    )
+    message_payload = {
+        "request_type": "closure_request",
+        "message": "The requested support work is complete; please review closure.",
+    }
+    request_url = (
+        f"/api/v1/department/cases/{case['id']}/action-requests"
+    )
+    assert test_client.post(request_url, json=message_payload).status_code == 403
+    sent_request = test_client.post(
+        request_url,
+        json=message_payload,
+        headers={"X-CSRF-Token": staff_csrf},
+    )
+    assert sent_request.status_code == 201
+    assert sent_request.json()["case_id"] == case["id"]
+    assert sent_request.json()["status"] == "open"
+
+    assert test_client.patch(
+        f"/api/v1/coordinator/cases/{case['id']}/status",
+        json={"status": "closed", "closure_outcome": "Staff closed this case."},
+        headers={"X-CSRF-Token": staff_csrf},
+    ).status_code == 403
+    assert test_client.patch(
+        f"/api/v1/cases/{case['id']}",
+        json={"status": "closed"},
+        headers={"X-CSRF-Token": staff_csrf},
+    ).status_code == 403
+
+    coordinator_csrf = _login_and_get_csrf(
+        test_client,
+        "progress-coordinator@example.com",
+    )
+    requests = test_client.get(
+        "/api/v1/coordinator/action-requests"
+    ).json()
+    assert len(requests) == 1
+    assert requests[0]["case_id"] == case["id"]
+    assert requests[0]["message"] == message_payload["message"]
+    assert requests[0]["request_type"] == "closure_request"
+
+    invalid_status = test_client.patch(
+        f"/api/v1/coordinator/cases/{case['id']}/status",
+        json={"status": "resolved"},
+        headers={"X-CSRF-Token": coordinator_csrf},
+    )
+    assert invalid_status.status_code == 422
+    missing_outcome = test_client.patch(
+        f"/api/v1/coordinator/cases/{case['id']}/status",
+        json={"status": "closed"},
+        headers={"X-CSRF-Token": coordinator_csrf},
+    )
+    assert missing_outcome.status_code == 422
+
+    follow_up = test_client.post(
+        f"/api/v1/coordinator/cases/{case['id']}/updates",
+        json={
+            "title": "Support follow-up",
+            "message": "The support team has arranged the next meeting.",
+        },
+        headers={"X-CSRF-Token": coordinator_csrf},
+    )
+    assert follow_up.status_code == 201
+    close_response = test_client.patch(
+        f"/api/v1/coordinator/cases/{case['id']}/status",
+        json={
+            "status": "closed",
+            "closure_outcome": "Support was provided and no further follow-up is needed.",
+        },
+        headers={"X-CSRF-Token": coordinator_csrf},
+    )
+    assert close_response.status_code == 200
+    assert close_response.json()["case"]["status"] == "closed"
+
+    _login_and_get_csrf(
+        test_client,
+        test_student["email"],
+        test_student["password"],
+    )
+    student_case = test_client.get(
+        f"/api/v1/cases/{case['id']}"
+    ).json()
+    assert student_case["status"] == "closed"
+    assert student_case["department"] == "Academic Support"
+    progress_messages = [
+        update["message"] for update in student_case["progress_updates"]
+    ]
+    assert "The support team has arranged the next meeting." in progress_messages
+    assert (
+        "Support was provided and no further follow-up is needed."
+        in progress_messages
+    )
+    progress_types = [
+        update["type"] for update in student_case["progress_updates"]
+    ]
+    assert "assignment" in progress_types
+    assert "routing" in progress_types
+    assert "follow_up" in progress_types
+    assert "closure" in progress_types
+    assert "status" in progress_types
+    assert message_payload["message"] not in str(student_case)
+
+    coordinator_csrf = _login_and_get_csrf(
+        test_client,
+        "progress-coordinator@example.com",
+    )
+    decision = test_client.patch(
+        f"/api/v1/coordinator/action-requests/{sent_request.json()['id']}",
+        json={"status": "handled"},
+        headers={"X-CSRF-Token": coordinator_csrf},
+    )
+    assert decision.status_code == 200
+    assert decision.json()["status"] == "handled"

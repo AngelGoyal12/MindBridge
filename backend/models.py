@@ -23,6 +23,8 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     role = Column(String(30), nullable=False, default="student", index=True)
     department = Column(String(100), nullable=True)
+    department_course = Column(String(100), nullable=True)
+    current_semester = Column(Integer, nullable=True)
 
     created_at = Column(
         DateTime(timezone=True),
@@ -60,6 +62,8 @@ class PendingEmailVerification(Base):
     name = Column(String(100), nullable=False)
     email = Column(String(255), nullable=False, unique=True)
     phone = Column(String(16), nullable=True)
+    department_course = Column(String(100), nullable=True)
+    current_semester = Column(Integer, nullable=True)
     password_hash = Column(String(255), nullable=False)
     otp_hash = Column(String(64), nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
@@ -207,6 +211,65 @@ class CaseDisclosureAudit(Base):
     decision = Column(String(30), nullable=False)
     reason = Column(Text, nullable=True)
 
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class CaseProgressUpdate(Base):
+    __tablename__ = "case_progress_updates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    case_id = Column(
+        Integer,
+        ForeignKey("cases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    author_user_id = Column(
+        Integer,
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+    update_type = Column(String(30), nullable=False)
+    title = Column(String(150), nullable=False)
+    message = Column(Text, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class DepartmentActionRequest(Base):
+    __tablename__ = "department_action_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    case_id = Column(
+        Integer,
+        ForeignKey("cases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    coordinator_id = Column(
+        Integer,
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+    sender_user_id = Column(
+        Integer,
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+    request_type = Column(String(30), nullable=False)
+    message = Column(Text, nullable=False)
+    status = Column(String(20), nullable=False, default="open")
+    handled_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),

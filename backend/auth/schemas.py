@@ -48,6 +48,8 @@ class RegisterRequest(BaseModel):
     name: str = Field(min_length=2, max_length=100)
     email: EmailStr
     phone: str = Field(min_length=10, max_length=16)
+    department_course: str = Field(min_length=1, max_length=100)
+    current_semester: int = Field(ge=1, le=8, strict=True)
     password: str = Field(min_length=12, max_length=128)
     confirm_password: str = Field(min_length=1, max_length=128)
 
@@ -65,6 +67,15 @@ class RegisterRequest(BaseModel):
     @classmethod
     def normalize_phone(cls, phone: str) -> str:
         return normalize_indian_phone(phone)
+
+    @field_validator("department_course", mode="before")
+    @classmethod
+    def trim_department_course(cls, department_course: object) -> object:
+        return (
+            department_course.strip()
+            if isinstance(department_course, str)
+            else department_course
+        )
 
     @field_validator("password")
     @classmethod
@@ -91,6 +102,8 @@ class UserResponse(BaseModel):
     email: EmailStr
     role: Role
     department: str | None = None
+    department_course: str | None = None
+    current_semester: int | None = None
     phone: str | None = None
     created_at: datetime
 

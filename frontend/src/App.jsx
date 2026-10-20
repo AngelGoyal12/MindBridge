@@ -26,15 +26,17 @@ import MyCases from './pages/MyCases.jsx';
 import CaseDetails from './pages/CaseDetails.jsx';
 import Notifications from './pages/Notifications.jsx';
 import PrivacyPreferences from './pages/PrivacyPreferences.jsx';
-import { getMyCases } from './services/caseService';
 import { AuthProvider } from './context/AuthContext.jsx';
 import { useAuth } from './context/authContext.js';
+import { NotificationProvider } from './context/NotificationContext.jsx';
+import { useNotifications } from './context/notificationContext.js';
 import RoleDashboard from './pages/RoleDashboard.jsx';
 import PlaceholderPage from './components/PlaceholderPage.jsx';
 import Profile from './pages/Profile.jsx';
 import VerifyEmail from './pages/VerifyEmail.jsx';
 import DepartmentPortal from './pages/DepartmentPortal.jsx';
 import CoordinatorInvitation from './pages/CoordinatorInvitation.jsx';
+import { caseStatusLabel, normalizeCaseStatus } from './services/casePresentation.js';
 
 const DASHBOARD_PATHS = {
   student: '/dashboard/student',
@@ -81,6 +83,7 @@ function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, signOut } = useAuth();
+  const { unreadCount } = useNotifications();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState('');
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
@@ -221,11 +224,20 @@ function Navbar() {
             <NavLink
               to="/notifications"
               className="nav-notifications"
-              aria-label="Notifications"
+              aria-label={
+                unreadCount > 0
+                  ? `Notifications, ${unreadCount} unread`
+                  : 'Notifications'
+              }
               title="Notifications"
             >
               <Bell size={19} />
               <span>Notifications</span>
+              {unreadCount > 0 && (
+                <span className="nav-notification-count" aria-hidden="true">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
             </NavLink>
           )}
 
@@ -580,69 +592,28 @@ function Home() {
 }
 
 function DashboardPlaceholder() {
-  const [cases, setCases] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadCases() {
-      try {
-        setLoading(true);
-        setError('');
-
-        const data = await getMyCases();
-
-        if (!cancelled) {
-          setCases(data);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err.message || 'Could not load cases.');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    loadCases();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const statusLabels = {
-    submitted: 'Submitted',
-    in_review: 'Under review',
-    in_progress: 'In progress',
-    resolved: 'Resolved',
-    closed: 'Closed',
-  };
+  const { cases, loading, error, refresh } = useNotifications();
 
   const categoryLabels = {
     ragging_bullying: 'Ragging & bullying',
     emotional_support: 'Emotional support',
     academic_support: 'Academic support',
+    academic: 'Academic',
     hostel_issue: 'Hostel & accommodation',
     financial_assistance: 'Financial assistance',
     other: 'Other support',
-    academic: 'Academic',
   };
 
   const displayCases = cases
     .map((item) => {
-      const status = item.status ?? 'submitted';
+      const status = normalizeCaseStatus(item.status);
       const dateValue =
         item.created_at ?? item.createdAt ?? item.date;
 
       return {
         ...item,
         status,
-        statusLabel: statusLabels[status] ?? status,
+        statusLabel: caseStatusLabel(item.status),
         categoryLabel:
           categoryLabels[item.category] ?? item.category,
         date: dateValue
@@ -652,14 +623,6 @@ function DashboardPlaceholder() {
               year: 'numeric',
             })
           : 'Date unavailable',
-        progress:
-          status === 'resolved' || status === 'closed'
-            ? 100
-            : status === 'in_progress'
-              ? 66
-              : status === 'in_review'
-                ? 33
-                : 0,
       };
     })
     .sort((a, b) => {
@@ -681,8 +644,16 @@ function DashboardPlaceholder() {
   ).length;
 
   const awaitingReviewCount = displayCases.filter(
-    (item) => ['submitted', 'in_review'].includes(item.status)
+    (item) =>
+      [
+        'open',
+        'submitted',
+        'in_review',
+        'under_review',
+        'awaiting_review',
+      ].includes(item.status)
   ).length;
+  const countLabel = loading || error ? '—' : null;
 
   return (
     <main className="dashboard page-container">
@@ -753,7 +724,7 @@ function DashboardPlaceholder() {
             <span className="overview-label">Total cases</span>
             <div className="overview-value-row">
               <span className="overview-number">
-                {String(totalCases).padStart(2, '0')}
+                {countLabel ?? String(totalCases).padStart(2, '0')}
               </span>
               <span className="overview-symbol symbol-green">
                 ↗
@@ -768,7 +739,7 @@ function DashboardPlaceholder() {
             <span className="overview-label">In progress</span>
             <div className="overview-value-row">
               <span className="overview-number">
-                {String(inProgressCount).padStart(2, '0')}
+                {countLabel ?? String(inProgressCount).padStart(2, '0')}
               </span>
               <span className="overview-symbol symbol-amber">
                 ◷
@@ -783,7 +754,7 @@ function DashboardPlaceholder() {
             <span className="overview-label">Awaiting review</span>
             <div className="overview-value-row">
               <span className="overview-number">
-                {String(awaitingReviewCount).padStart(2, '0')}
+                {countLabel ?? String(awaitingReviewCount).padStart(2, '0')}
               </span>
               <span className="overview-symbol symbol-coral">
                 ◎
@@ -811,9 +782,14 @@ function DashboardPlaceholder() {
 
           <div className="case-list">
             {loading ? (
-              <p>Loading recent cases...</p>
+              <p role="status">Loading recent cases...</p>
             ) : error ? (
-              <p>Recent cases could not be loaded.</p>
+              <div role="alert">
+                <p>Recent cases could not be loaded: {error}</p>
+                <button type="button" className="secondary-button" onClick={refresh}>
+                  Retry
+                </button>
+              </div>
             ) : displayCases.length === 0 ? (
               <p>No cases submitted yet.</p>
             ) : (
@@ -826,12 +802,17 @@ function DashboardPlaceholder() {
 
                   <div className="case-main">
                     <div className="case-id">{item.id}</div>
-                    <h3>{item.title}</h3>
+                    <h3>
+                      <NavLink to={`/cases/${item.id}`} state={{ caseData: item }}>
+                        {item.title}
+                      </NavLink>
+                    </h3>
                     <p>
                       {item.categoryLabel}
                       <span> · </span>
                       {item.date}
                     </p>
+                    <p>Department: {item.department || "Awaiting routing"}</p>
                   </div>
 
                   <div className="case-end">
@@ -843,9 +824,7 @@ function DashboardPlaceholder() {
                     </span>
 
                     <span className="case-progress-label">
-                      {item.progress === 100
-                        ? 'Completed'
-                        : 'Status update'}
+                      {item.department || 'Awaiting department routing'}
                     </span>
                   </div>
                 </article>
@@ -939,6 +918,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <NotificationProvider>
         <Navbar />
 
         <Routes>
@@ -1086,6 +1066,7 @@ export default function App() {
             }
           />
         </Routes>
+        </NotificationProvider>
       </AuthProvider>
     </BrowserRouter>
   );

@@ -115,6 +115,18 @@ export default function Profile() {
             <dd>{profile.phone || "Not provided"}</dd>
           </div>
           <div className="profile-detail">
+            <dt>Department/Course</dt>
+            <dd>{profile.department_course || "Not provided"}</dd>
+          </div>
+          <div className="profile-detail">
+            <dt>Current Semester</dt>
+            <dd>
+              {profile.current_semester
+                ? `Semester ${profile.current_semester}`
+                : "Not provided"}
+            </dd>
+          </div>
+          <div className="profile-detail">
             <dt>Role</dt>
             <dd>{ROLE_LABELS[profile.role] || profile.role}</dd>
           </div>

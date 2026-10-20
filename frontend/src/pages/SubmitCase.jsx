@@ -10,7 +10,6 @@ import {
     LockKeyhole,
     Eye,
     EyeOff,
-    Info,
 } from 'lucide-react';
 
 import {
@@ -19,6 +18,8 @@ import {
 } from "../services/privacyService";
 
 import { createCase } from "../services/caseService";
+import { useAuth } from "../context/authContext";
+import { useNotifications } from "../context/notificationContext";
 
 const categories = [
     { value: 'academic_support', label: 'Academic support' },
@@ -32,52 +33,49 @@ const categories = [
 const privacyOptions = [
     {
         value: 'identified',
-        title: 'Identified case, consent-gated disclosure',
+        title: 'Identity linked to my account',
         description:
-            'Your case is linked to your account. Coordinators still cannot see your identity unless you grant active, purpose-specific consent.',
+            'Your case is linked to your account. Assigned Coordinators can review your case and identity.',
         icon: Eye,
     },
     {
         value: 'restricted',
-        title: 'Restricted, consent-gated disclosure',
+        title: 'Restricted identity preference',
         description:
-            'Your case is linked to your account, but coordinator identity disclosure requires active consent matching the recipient, purpose, and scope.',
+            'Your case is linked to your account. Department disclosure is controlled separately below.',
         icon: LockKeyhole,
     },
     {
         value: 'anonymous',
-        title: 'Block coordinator identity disclosure',
+        title: 'No additional identity preference',
         description:
-            'Coordinator identity disclosure is blocked for this case. This does not remove your account link or guarantee anonymity; details you write may still identify you.',
+            'This does not remove your account link or guarantee anonymity; department sharing is controlled separately below.',
         icon: EyeOff,
     },
 ];
 
 export default function SubmitCase() {
     const navigate = useNavigate();
+    const { user } = useAuth();
+    const { refresh: refreshNotifications } = useNotifications();
 
     const [form, setForm] = useState({
         title: '',
         category: '',
         description: '',
-        incidentDate: '',
-        incidentLocation: '',
-        peopleInvolved: '',
         identityMode: getIdentityPreference(),
         consentConfirmed: false,
+        departmentConsentLevel: 'anonymous',
+        departmentConsentFields: [],
     });
 
     const [errors, setErrors] = useState({});
     const [submitted, setSubmitted] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     const selectedCategory = categories.find(
         (item) => item.value === form.category
     );
-
-    const isSensitiveCategory = [
-        'ragging_bullying',
-        'emotional_support',
-    ].includes(form.category);
 
     function updateField(event) {
         const { name, value, type, checked } = event.target;
@@ -114,26 +112,6 @@ export default function SubmitCase() {
                 'Please provide a little more detail (at least 20 characters).';
         }
 
-
-        if (form.incidentDate) {
-            const today = new Date();
-            const todayString = [
-                today.getFullYear(),
-                String(today.getMonth() + 1).padStart(2, "0"),
-                String(today.getDate()).padStart(2, "0"),
-            ].join("-");
-
-            if (
-                !/^\d{4}-\d{2}-\d{2}$/.test(form.incidentDate) ||
-                form.incidentDate > todayString ||
-                Number.isNaN(Date.parse(form.incidentDate))
-            ) {
-                nextErrors.incidentDate =
-                    "Please enter a valid date that is not in the future.";
-            }
-        }
-
-
         if (!form.consentConfirmed) {
             nextErrors.consentConfirmed =
                 'Please confirm that you understand the privacy information.';
@@ -147,10 +125,12 @@ export default function SubmitCase() {
 async function handleSubmit(event) {
     event.preventDefault();
 
+    if (isSubmitting) return;
     if (!validateForm()) {
         return;
     }
 
+    setIsSubmitting(true);
     try {
         setErrors((current) => ({ ...current, form: '' }));
 
@@ -159,7 +139,13 @@ async function handleSubmit(event) {
             category: form.category,
             description: form.description.trim(),
             identity_mode: form.identityMode,
+            department_consent_level: form.departmentConsentLevel,
+            department_consent_fields:
+                form.departmentConsentLevel === 'restricted'
+                    ? form.departmentConsentFields
+                    : [],
         });
+        await refreshNotifications();
 
         setSubmitted(true);
     } catch (error) {
@@ -167,6 +153,8 @@ async function handleSubmit(event) {
             ...current,
             form: error.message || 'Could not submit your concern. Please try again.',
         }));
+    } finally {
+        setIsSubmitting(false);
     }
 }
 
@@ -195,6 +183,10 @@ async function handleSubmit(event) {
                                 (option) => option.value === form.identityMode
                             )?.title}
                         </strong>
+                        <span>Department identity disclosure</span>
+                        <strong>
+                        {form.departmentConsentLevel.replaceAll('_', ' ')}
+                        </strong>
                     </div>
                     <div className="success-actions">
                         <button
@@ -213,11 +205,10 @@ async function handleSubmit(event) {
                                     title: '',
                                     category: '',
                                     description: '',
-                                    incidentDate: '',
-                                    incidentLocation: '',
-                                    peopleInvolved: '',
                                     identityMode: getIdentityPreference(),
                                     consentConfirmed: false,
+                                    departmentConsentLevel: 'anonymous',
+                                    departmentConsentFields: [],
                                 });
                             }}
                         >
@@ -244,7 +235,10 @@ async function handleSubmit(event) {
         try {
             saveIdentityPreference(value);
         } catch (error) {
-            console.error('Could not save identity preference:', error);
+            setErrors((current) => ({
+                ...current,
+                identityMode: error.message || 'Could not save this browser preference.',
+            }));
         }
     }
 
@@ -351,7 +345,7 @@ async function handleSubmit(event) {
                                     </span>
                                 ) : (
                                     <span id="description-hint">
-                                        Routine coordinator review does not include this text. Avoid details that could identify you if you do not want them recorded in your case.
+                                        Your assigned Coordinator can review this text and your identity. Avoid adding identity details to the report if they are not needed.
                                     </span>
                                 )}
                                 <span>{form.description.length}/5000</span>
@@ -359,82 +353,14 @@ async function handleSubmit(event) {
                         </div>
                     </section>
 
-                    <section className="form-section">
+                    <section className="form-section privacy-form-section">
                         <div className="form-section-heading">
                             <span className="form-step">02</span>
                             <div>
-                                <h2>Additional details</h2>
-                                <p>
-                                    These fields are optional. Add them if they help explain
-                                    your concern.
-                                </p>
-                            </div>
-                        </div>
-
-                        <div className="form-two-columns">
-                            <div className="field-group">
-                                <label htmlFor="incidentDate">When did it happen?</label>
-                                <input
-                                    id="incidentDate"
-                                    name="incidentDate"
-                                    type="date"
-                                    value={form.incidentDate}
-                                    onChange={updateField}
-                                    max={new Date().toISOString().slice(0, 10)}
-                                />
-                                {errors.incidentDate && (
-                                    <span className="field-error" role="alert">
-                                        {errors.incidentDate}
-                                    </span>
-                                )}
-                            </div>
-
-                            <div className="field-group">
-                                <label htmlFor="incidentLocation">Where did it happen?</label>
-                                <input
-                                    id="incidentLocation"
-                                    name="incidentLocation"
-                                    value={form.incidentLocation}
-                                    onChange={updateField}
-                                    placeholder="e.g. Hostel common area"
-                                    maxLength={200}
-                                />
-                            </div>
-                        </div>
-
-                        {isSensitiveCategory && (
-                            <div className="field-group">
-                                <label htmlFor="peopleInvolved">
-                                    People or other relevant details (optional)
-                                </label>
-                                <textarea
-                                    id="peopleInvolved"
-                                    name="peopleInvolved"
-                                    value={form.peopleInvolved}
-                                    onChange={updateField}
-                                    placeholder="Add relevant details or witnesses if you feel comfortable. Avoid sharing unnecessary personal information."
-                                    rows={3}
-                                    maxLength={2000}
-                                />
-                            </div>
-                        )}
-
-                        <div className="optional-note">
-                            <Info size={16} />
-                            <p>
-                                You can leave optional fields blank. Only include details
-                                relevant to understanding and addressing your concern.
-                            </p>
-                        </div>
-                    </section>
-
-                    <section className="form-section privacy-form-section">
-                        <div className="form-section-heading">
-                            <span className="form-step">03</span>
-                            <div>
                                 <h2>Choose your identity preference</h2>
                                 <p>
-                                    Consider who may need to know your identity to respond.
+                                    This setting does not replace your separate consent
+                                    decision for the assigned department.
                                 </p>
                             </div>
                         </div>
@@ -470,20 +396,89 @@ async function handleSubmit(event) {
                                 );
                             })}
                         </div>
+                        {errors.identityMode && (
+                            <p role="alert" className="field-error">
+                                {errors.identityMode}
+                            </p>
+                        )}
 
                         <div className="privacy-disclaimer">
                             <ShieldCheck size={18} />
                             <p>
-                                <strong>What this means:</strong> Your selection records
-                                the identity mode for this case. Coordinators never see your
-                                identity during routine review; identified and restricted
-                                cases still require your active, purpose-specific consent for
-                                disclosure. The block-disclosure mode prevents that endpoint
-                                from revealing identity, but does not unlink your account or
-                                guarantee anonymity. Avoid putting identifying details in text
-                                if you do not want them recorded in the case.
+                                <strong>What this means:</strong> Your case is linked to
+                                your account. The assigned Coordinator can see your identity
+                                and full case details. The department receives only the
+                                identity fields you authorize below; report text may also
+                                contain identifying details, so avoid including details
+                                that are not needed.
                             </p>
                         </div>
+
+                        <fieldset className="field-group">
+                            <legend>What identity details may the assigned department see?</legend>
+                            <p>
+                                Your choice is saved with this case. Anonymous is selected
+                                by default. The assigned Coordinator can see your identity
+                                regardless of this choice; only the routed department's
+                                access is limited here.
+                            </p>
+                            {[
+                                {
+                                    value: 'anonymous',
+                                    label: 'Anonymous — share no identity or contact details',
+                                },
+                                {
+                                    value: 'restricted',
+                                    label: 'Restricted — choose individual details to share',
+                                },
+                                {
+                                    value: 'full_disclosure',
+                                    label: 'Full disclosure — share all available identity/contact details',
+                                },
+                            ].map((option) => (
+                                <label className="consent-row" key={option.value}>
+                                    <input
+                                        type="radio"
+                                        name="departmentConsentLevel"
+                                        value={option.value}
+                                        checked={form.departmentConsentLevel === option.value}
+                                        onChange={(event) => setForm((current) => ({
+                                            ...current,
+                                            departmentConsentLevel: event.target.value,
+                                            departmentConsentFields: [],
+                                        }))}
+                                    />
+                                    <span>{option.label}</span>
+                                </label>
+                            ))}
+                            {form.departmentConsentLevel === 'restricted' && (
+                                <fieldset className="field-group">
+                                    <legend>Choose the details to share</legend>
+                                    {[
+                                        { value: 'name', label: `Name${user?.name ? ` (${user.name})` : ''}` },
+                                        { value: 'email', label: `Email${user?.email ? ` (${user.email})` : ''}` },
+                                        { value: 'phone', label: `Phone${user?.phone ? ` (${user.phone})` : ''}` },
+                                        ...(user?.department
+                                            ? [{ value: 'department', label: `Student department (${user.department})` }]
+                                            : []),
+                                    ].map((field) => (
+                                        <label className="consent-row" key={field.value}>
+                                            <input
+                                                type="checkbox"
+                                                checked={form.departmentConsentFields.includes(field.value)}
+                                                onChange={(event) => setForm((current) => ({
+                                                    ...current,
+                                                    departmentConsentFields: event.target.checked
+                                                        ? [...current.departmentConsentFields, field.value]
+                                                        : current.departmentConsentFields.filter((value) => value !== field.value),
+                                                }))}
+                                            />
+                                            <span>{field.label}</span>
+                                        </label>
+                                    ))}
+                                </fieldset>
+                            )}
+                        </fieldset>
 
                         <label className="consent-row">
                             <input
@@ -511,8 +506,13 @@ async function handleSubmit(event) {
 
                     <div className="form-submit-row">
                         <span><span>*</span> Required fields</span>
-                        <button type="submit" className="button-primary">
-                            Review my concern <ArrowRight size={17} />
+                        <button
+                            type="submit"
+                            className="button-primary"
+                            disabled={isSubmitting}
+                        >
+                            {isSubmitting ? 'Submitting...' : 'Submit concern'}
+                            {!isSubmitting && <ArrowRight size={17} />}
                         </button>
                     </div>
                 </form>

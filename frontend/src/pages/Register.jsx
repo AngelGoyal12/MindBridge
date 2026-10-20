@@ -51,6 +51,17 @@ function getFieldErrors(form) {
       "Enter a valid 10-digit Indian mobile number, optionally with +91.";
   }
 
+  if (!form.departmentCourse.trim()) {
+    errors.departmentCourse = "Enter your Department/Course.";
+  } else if (form.departmentCourse.trim().length > 100) {
+    errors.departmentCourse = "Use no more than 100 characters.";
+  }
+  if (!form.currentSemester) {
+    errors.currentSemester = "Choose your current semester.";
+  } else if (!/^[1-8]$/.test(form.currentSemester)) {
+    errors.currentSemester = "Choose a semester from 1 to 8.";
+  }
+
   const missingRequirements = [];
   if (form.password.length < 12) missingRequirements.push("12 characters");
   if (!/[A-Z]/.test(form.password)) {
@@ -79,6 +90,8 @@ export default function Register() {
     name: "",
     email: "",
     phone: "",
+    departmentCourse: "",
+    currentSemester: "",
     password: "",
     confirmPassword: "",
   });
@@ -113,6 +126,8 @@ export default function Register() {
         name: form.name.trim(),
         email: form.email.trim(),
         phone: form.phone.trim(),
+        departmentCourse: form.departmentCourse.trim(),
+        currentSemester: Number(form.currentSemester),
         password: form.password,
         confirmPassword: form.confirmPassword,
       });
@@ -194,6 +209,83 @@ export default function Register() {
             {visibleError("name") && (
               <span id="register-name-error" className="field-error">
                 {visibleError("name")}
+              </span>
+            )}
+          </div>
+
+          <div className="field-group">
+            <label htmlFor="register-department-course">
+              Department/Course
+            </label>
+            <input
+              id="register-department-course"
+              name="departmentCourse"
+              type="text"
+              autoComplete="organization-title"
+              placeholder="Enter your department or course"
+              maxLength={100}
+              value={form.departmentCourse}
+              onChange={handleChange}
+              onBlur={() =>
+                setTouched((current) => ({
+                  ...current,
+                  departmentCourse: true,
+                }))
+              }
+              required
+              aria-invalid={Boolean(visibleError("departmentCourse"))}
+              aria-describedby={
+                visibleError("departmentCourse")
+                  ? "register-department-course-error"
+                  : undefined
+              }
+            />
+            {visibleError("departmentCourse") && (
+              <span
+                id="register-department-course-error"
+                className="field-error"
+              >
+                {visibleError("departmentCourse")}
+              </span>
+            )}
+          </div>
+
+          <div className="field-group">
+            <label htmlFor="register-current-semester">Current Semester</label>
+            <select
+              id="register-current-semester"
+              name="currentSemester"
+              value={form.currentSemester}
+              onChange={handleChange}
+              onBlur={() =>
+                setTouched((current) => ({
+                  ...current,
+                  currentSemester: true,
+                }))
+              }
+              required
+              aria-invalid={Boolean(visibleError("currentSemester"))}
+              aria-describedby={
+                visibleError("currentSemester")
+                  ? "register-current-semester-error"
+                  : undefined
+              }
+            >
+              <option value="">Select your current semester</option>
+              {Array.from({ length: 8 }, (_, index) => index + 1).map(
+                (semester) => (
+                  <option key={semester} value={semester}>
+                    Semester {semester}
+                  </option>
+                ),
+              )}
+            </select>
+            {visibleError("currentSemester") && (
+              <span
+                id="register-current-semester-error"
+                className="field-error"
+              >
+                {visibleError("currentSemester")}
               </span>
             )}
           </div>
