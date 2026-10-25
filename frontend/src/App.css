@@ -4747,3 +4747,131 @@
   gap: 12px;
   max-width: 640px;
 }
+
+
+/* Informational footer pages */
+.info-page {
+  padding-top: 44px;
+  padding-bottom: 80px;
+}
+
+.info-page-header {
+  max-width: 760px;
+  margin: 54px auto 42px;
+  text-align: center;
+}
+
+.info-page-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 22px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #cfd8cb;
+  border-radius: 50%;
+  background: #e7ede3;
+  color: var(--color-green);
+}
+
+.info-page-header h1 {
+  margin: 18px 0;
+  font-family: var(--font-heading);
+  font-size: clamp(38px, 5vw, 60px);
+  line-height: 1.12;
+  font-weight: 500;
+  letter-spacing: -1.7px;
+}
+
+.info-page-intro {
+  max-width: 650px;
+  margin: 0 auto;
+  color: var(--color-muted);
+  font-size: 15px;
+  line-height: 1.9;
+}
+
+.info-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.info-card {
+  padding: 26px;
+  border: 1px solid #e1e5dc;
+  border-radius: 12px;
+  background: rgba(255, 254, 250, 0.8);
+}
+
+.info-card h2,
+.info-next-step h2 {
+  margin: 0 0 12px;
+  color: var(--color-ink);
+  font-family: var(--font-heading);
+  font-size: 23px;
+  font-weight: 500;
+}
+
+.info-card p,
+.info-next-step p {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.9;
+}
+
+.info-page-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 24px;
+  padding: 18px;
+  border-radius: 8px;
+  background: var(--color-green-soft);
+  color: var(--color-green-dark);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.info-page-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.info-next-step {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 42px;
+  padding: 30px;
+  border-radius: 12px;
+  background: #edf1e8;
+}
+
+.info-next-step > div {
+  max-width: 540px;
+}
+
+.info-next-step .button-primary {
+  flex-shrink: 0;
+}
+
+@media (max-width: 650px) {
+  .info-page-header {
+    margin-top: 36px;
+  }
+
+  .info-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .info-next-step {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+.app-main {
+  min-height: 60vh;
+}

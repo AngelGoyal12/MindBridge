@@ -314,6 +314,92 @@ function Reveal({ children, className = '' }) {
   return <div className={`reveal ${className}`}>{children}</div>;
 }
 
+
+function SiteFooter() {
+  return (
+    <footer className="site-footer">
+      <div className="footer-main page-container">
+        <div className="footer-message">
+          <span className="footer-eyebrow">
+            <span className="footer-spark">✳</span>
+            A note to take with you
+          </span>
+
+          <h2>
+            Asking for support
+            <br />
+            is a form of <em>strength.</em>
+          </h2>
+
+          <p>
+            You don't need the perfect words.
+            You just need a place to begin.
+          </p>
+        </div>
+
+        <div className="footer-side">
+          <div className="footer-brand-lockup">
+            <span className="footer-monogram">mb</span>
+            <span className="footer-brand-name">mindbridge.</span>
+          </div>
+
+          <p className="footer-side-copy">
+            A more thoughtful way to connect student concerns with
+            the people who can help.
+          </p>
+
+          <NavLink to="/dashboard" className="footer-link">
+            Explore the student portal <ArrowUpRight size={16} />
+          </NavLink>
+
+          <div className="footer-page-links">
+            <NavLink to="/department-portal">Staff Portal</NavLink>
+            <NavLink to="/help">Help &amp; Support</NavLink>
+            <NavLink to="/about">About</NavLink>
+            <NavLink to="/departments">Departments</NavLink>
+            <NavLink to="/accessibility">Accessibility</NavLink>
+          </div>
+        </div>
+      </div>
+
+      <div className="footer-bottom page-container">
+        <span>
+          MINDBRIDGE <span className="footer-separator">/</span>{' '}
+          STUDENT SUPPORT CONCEPT
+        </span>
+        <a href="/#privacy">
+          Privacy is part of the design <span>↗</span>
+        </a>
+        <span>Built with care, one step at a time.</span>
+      </div>
+    </footer>
+  );
+}
+
+
+function ScrollToTop() {
+  const { pathname, hash } = useLocation();
+
+  useEffect(() => {
+    // Let the new route render before scrolling.
+    requestAnimationFrame(() => {
+      if (hash) {
+        const target = document.querySelector(hash);
+
+        if (target) {
+          target.scrollIntoView({ behavior: "auto", block: "start" });
+          return;
+        }
+      }
+
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    });
+  }, [pathname, hash]);
+
+  return null;
+}
+
+
 function Home() {
   return (
     <>
@@ -530,63 +616,6 @@ function Home() {
           </Reveal>
         </section>
       </main>
-
-      <footer className="site-footer">
-        <div className="footer-main page-container">
-          <div className="footer-message">
-            <span className="footer-eyebrow">
-              <span className="footer-spark">✳</span>
-              A note to take with you
-            </span>
-
-            <h2>
-              Asking for support
-              <br />
-              is a form of <em>strength.</em>
-            </h2>
-
-            <p>
-              You don't need the perfect words.
-              You just need a place to begin.
-            </p>
-          </div>
-
-          <div className="footer-side">
-            <div className="footer-brand-lockup">
-              <span className="footer-monogram">mb</span>
-              <span className="footer-brand-name">mindbridge.</span>
-            </div>
-
-            <p className="footer-side-copy">
-              A more thoughtful way to connect student concerns with
-              the people who can help.
-            </p>
-
-            <NavLink to="/dashboard" className="footer-link">
-              Explore the student portal <ArrowUpRight size={16} />
-            </NavLink>
-
-            <div className="footer-page-links">
-              <NavLink to="/department-portal">Department</NavLink>
-              <NavLink to="/help">Help &amp; Support</NavLink>
-              <NavLink to="/about">About</NavLink>
-              <NavLink to="/departments">Departments</NavLink>
-              <NavLink to="/accessibility">Accessibility</NavLink>
-            </div>
-          </div>
-        </div>
-
-        <div className="footer-bottom page-container">
-          <span>
-            MINDBRIDGE <span className="footer-separator">/</span>{' '}
-            STUDENT SUPPORT CONCEPT
-          </span>
-          <a href="/#privacy">
-            Privacy is part of the design <span>↗</span>
-          </a>
-          <span>Built with care, one step at a time.</span>
-        </div>
-      </footer>
     </>
   );
 }
@@ -618,10 +647,10 @@ function DashboardPlaceholder() {
           categoryLabels[item.category] ?? item.category,
         date: dateValue
           ? new Date(dateValue).toLocaleDateString('en-IN', {
-              day: '2-digit',
-              month: 'short',
-              year: 'numeric',
-            })
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+          })
           : 'Date unavailable',
       };
     })
@@ -919,153 +948,158 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <NotificationProvider>
-        <Navbar />
+          <ScrollToTop />
+          <Navbar />
 
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          <Route path="/verify-email" element={<VerifyEmail />} />
-          <Route path="/department-portal" element={<DepartmentPortal />} />
-          <Route
-            path="/coordinator-invitation"
-            element={<CoordinatorInvitation />}
-          />
-          <Route
-            path="/dashboard"
-            element={
-              <ProtectedRoute>
-                <DashboardRedirect />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/profile"
-            element={
-              <ProtectedRoute>
-                <Profile />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/dashboard/student"
-            element={
-              <ProtectedRoute roles={['student']}>
-                <DashboardPlaceholder />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/dashboard/coordinator"
-            element={
-              <ProtectedRoute roles={['coordinator']}>
-                <RoleDashboard />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/dashboard/admin"
-            element={
-              <ProtectedRoute roles={['admin']}>
-                <RoleDashboard />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/dashboard/department"
-            element={
-              <ProtectedRoute roles={['department_staff']}>
-                <RoleDashboard />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/submit"
-            element={
-              <ProtectedRoute roles={['student']}>
-                <SubmitCase />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/cases"
-            element={
-              <ProtectedRoute roles={['student']}>
-                <MyCases />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/cases/:caseId"
-            element={
-              <ProtectedRoute roles={['student']}>
-                <CaseDetails />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/notifications"
-            element={
-              <ProtectedRoute roles={['student']}>
-                <Notifications />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/privacy-preferences"
-            element={
-              <ProtectedRoute roles={['student']}>
-                <PrivacyPreferences />
-              </ProtectedRoute>
-            }
-          />
+        <div className="app-main">
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/verify-email" element={<VerifyEmail />} />
+            <Route path="/department-portal" element={<DepartmentPortal />} />
+            <Route
+              path="/coordinator-invitation"
+              element={<CoordinatorInvitation />}
+            />
+            <Route
+              path="/dashboard"
+              element={
+                <ProtectedRoute>
+                  <DashboardRedirect />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <Profile />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard/student"
+              element={
+                <ProtectedRoute roles={['student']}>
+                  <DashboardPlaceholder />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard/coordinator"
+              element={
+                <ProtectedRoute roles={['coordinator']}>
+                  <RoleDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard/admin"
+              element={
+                <ProtectedRoute roles={['admin']}>
+                  <RoleDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard/department"
+              element={
+                <ProtectedRoute roles={['department_staff']}>
+                  <RoleDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/submit"
+              element={
+                <ProtectedRoute roles={['student']}>
+                  <SubmitCase />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/cases"
+              element={
+                <ProtectedRoute roles={['student']}>
+                  <MyCases />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/cases/:caseId"
+              element={
+                <ProtectedRoute roles={['student']}>
+                  <CaseDetails />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/notifications"
+              element={
+                <ProtectedRoute roles={['student']}>
+                  <Notifications />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/privacy-preferences"
+              element={
+                <ProtectedRoute roles={['student']}>
+                  <PrivacyPreferences />
+                </ProtectedRoute>
+              }
+            />
 
-          <Route path="*" element={<NotFound />} />
+            <Route path="*" element={<NotFound />} />
 
-          <Route
-            path="/help"
-            element={
-              <PlaceholderPage
-                eyebrow="SUPPORT"
-                title="We're here to help."
-                description="Find guidance on using MindBridge, understanding the support process, and getting help when you need it."
-              />
-            }
-          />
+            <Route
+              path="/help"
+              element={
+                <PlaceholderPage
+                  eyebrow="SUPPORT"
+                  title="We're here to help."
+                  description="Find guidance on using MindBridge, understanding the support process, and getting help when you need it."
+                />
+              }
+            />
 
-          <Route
-            path="/about"
-            element={
-              <PlaceholderPage
-                eyebrow="OUR PURPOSE"
-                title="Support that puts students first."
-                description="MindBridge helps coordinate student support through a privacy-conscious, human-centred approach."
-              />
-            }
-          />
+            <Route
+              path="/about"
+              element={
+                <PlaceholderPage
+                  eyebrow="OUR PURPOSE"
+                  title="Support that puts students first."
+                  description="MindBridge helps coordinate student support through a privacy-conscious, human-centred approach."
+                />
+              }
+            />
 
-          <Route
-            path="/accessibility"
-            element={
-              <PlaceholderPage
-                eyebrow="ACCESSIBILITY"
-                title="Support should be accessible to everyone."
-                description="We're working towards a clear, inclusive, and accessible experience for every student."
-              />
-            }
-          />
+            <Route
+              path="/accessibility"
+              element={
+                <PlaceholderPage
+                  eyebrow="ACCESSIBILITY"
+                  title="Support should be accessible to everyone."
+                  description="We're working towards a clear, inclusive, and accessible experience for every student."
+                />
+              }
+            />
 
-          <Route
-            path="/departments"
-            element={
-              <PlaceholderPage
-                eyebrow="STUDENT SUPPORT"
-                title="Find the right support."
-                description="Explore the departments and support services that will help students navigate their concerns."
-              />
-            }
-          />
-        </Routes>
+            <Route
+              path="/departments"
+              element={
+                <PlaceholderPage
+                  eyebrow="STUDENT SUPPORT"
+                  title="Find the right support."
+                  description="Explore the departments and support services that will help students navigate their concerns."
+                />
+              }
+            />
+          </Routes>
+        </div>
+
+          <SiteFooter />
         </NotificationProvider>
       </AuthProvider>
     </BrowserRouter>
