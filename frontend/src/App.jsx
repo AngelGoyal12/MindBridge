@@ -85,10 +85,25 @@ function Navbar() {
   const { user, signOut } = useAuth();
   const { unreadCount } = useNotifications();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [logoutError, setLogoutError] = useState('');
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const profileMenuRef = useRef(null);
   const profileButtonRef = useRef(null);
+
+  useEffect(() => {
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setMobileMenuOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleEscape);
+
+    return () => {
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, []);
 
   useEffect(() => {
     if (!profileMenuOpen) return undefined;
@@ -161,22 +176,40 @@ function Navbar() {
           </span>
         </NavLink>
 
-        <div className="nav-links">
+
+        <div
+          className={`nav-links ${mobileMenuOpen ? 'nav-links-open' : ''}`}
+          id="main-navigation-links"
+        >
           <NavLink
             to="/"
             end
             className="nav-link"
-            onClick={handleHomeClick}
+            onClick={(event) => {
+              handleHomeClick(event);
+              setMobileMenuOpen(false);
+            }}
           >
             <span className="nav-index">01</span> Home
           </NavLink>
-          <a href="/#how-it-works" className="nav-link">
+
+          <a
+            href="/#how-it-works"
+            className="nav-link"
+            onClick={() => setMobileMenuOpen(false)}
+          >
             <span className="nav-index">02</span> The process
           </a>
-          <a href="/#privacy" className="nav-link">
+
+          <a
+            href="/#privacy"
+            className="nav-link"
+            onClick={() => setMobileMenuOpen(false)}
+          >
             <span className="nav-index">03</span> Your privacy
           </a>
         </div>
+
 
         <div className="nav-actions">
           {user && (
@@ -264,17 +297,10 @@ function Navbar() {
         <button
           className="mobile-menu"
           type="button"
-          aria-label="Toggle navigation"
-          aria-expanded="false"
-          onClick={(event) => {
-            const links = document.querySelector('.nav-links');
-            const isOpen = links?.classList.toggle('nav-links-open');
-
-            event.currentTarget.setAttribute(
-              'aria-expanded',
-              String(Boolean(isOpen))
-            );
-          }}
+          aria-label={mobileMenuOpen ? "Close navigation" : "Open navigation"}
+          aria-expanded={mobileMenuOpen}
+          aria-controls="main-navigation-links"
+          onClick={() => setMobileMenuOpen((open) => !open)}
         >
           <Menu size={22} />
         </button>
@@ -453,10 +479,14 @@ function Home() {
             <div className="art-orbit orbit-one" />
             <div className="art-orbit orbit-two" />
 
-            <div className="art-note note-top">
+            <NavLink
+              to="/submit"
+              className="art-note note-top"
+              aria-label="Space to speak — share a concern"
+            >
               <span className="note-icon">✳</span>
               <span>Space to speak</span>
-            </div>
+            </NavLink>
 
             <div className="art-center">
               <div className="art-sun" />
@@ -468,10 +498,14 @@ function Home() {
               <span className="art-center-label">a place to begin</span>
             </div>
 
-            <div className="art-note note-bottom">
+            <a
+              href="#how-it-works"
+              className="art-note note-bottom"
+              aria-label="One step at a time — learn how MindBridge works"
+            >
               <span className="note-check">✓</span>
               <span>One step at a time</span>
-            </div>
+            </a>
 
             <span className="art-spark spark-one">✳</span>
             <span className="art-spark spark-two">·</span>
@@ -951,153 +985,153 @@ export default function App() {
           <ScrollToTop />
           <Navbar />
 
-        <div className="app-main">
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/verify-email" element={<VerifyEmail />} />
-            <Route path="/department-portal" element={<DepartmentPortal />} />
-            <Route
-              path="/coordinator-invitation"
-              element={<CoordinatorInvitation />}
-            />
-            <Route
-              path="/dashboard"
-              element={
-                <ProtectedRoute>
-                  <DashboardRedirect />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/profile"
-              element={
-                <ProtectedRoute>
-                  <Profile />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/dashboard/student"
-              element={
-                <ProtectedRoute roles={['student']}>
-                  <DashboardPlaceholder />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/dashboard/coordinator"
-              element={
-                <ProtectedRoute roles={['coordinator']}>
-                  <RoleDashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/dashboard/admin"
-              element={
-                <ProtectedRoute roles={['admin']}>
-                  <RoleDashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/dashboard/department"
-              element={
-                <ProtectedRoute roles={['department_staff']}>
-                  <RoleDashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/submit"
-              element={
-                <ProtectedRoute roles={['student']}>
-                  <SubmitCase />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/cases"
-              element={
-                <ProtectedRoute roles={['student']}>
-                  <MyCases />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/cases/:caseId"
-              element={
-                <ProtectedRoute roles={['student']}>
-                  <CaseDetails />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/notifications"
-              element={
-                <ProtectedRoute roles={['student']}>
-                  <Notifications />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/privacy-preferences"
-              element={
-                <ProtectedRoute roles={['student']}>
-                  <PrivacyPreferences />
-                </ProtectedRoute>
-              }
-            />
+          <div className="app-main">
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
+              <Route path="/verify-email" element={<VerifyEmail />} />
+              <Route path="/department-portal" element={<DepartmentPortal />} />
+              <Route
+                path="/coordinator-invitation"
+                element={<CoordinatorInvitation />}
+              />
+              <Route
+                path="/dashboard"
+                element={
+                  <ProtectedRoute>
+                    <DashboardRedirect />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/profile"
+                element={
+                  <ProtectedRoute>
+                    <Profile />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard/student"
+                element={
+                  <ProtectedRoute roles={['student']}>
+                    <DashboardPlaceholder />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard/coordinator"
+                element={
+                  <ProtectedRoute roles={['coordinator']}>
+                    <RoleDashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard/admin"
+                element={
+                  <ProtectedRoute roles={['admin']}>
+                    <RoleDashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dashboard/department"
+                element={
+                  <ProtectedRoute roles={['department_staff']}>
+                    <RoleDashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/submit"
+                element={
+                  <ProtectedRoute roles={['student']}>
+                    <SubmitCase />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/cases"
+                element={
+                  <ProtectedRoute roles={['student']}>
+                    <MyCases />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/cases/:caseId"
+                element={
+                  <ProtectedRoute roles={['student']}>
+                    <CaseDetails />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/notifications"
+                element={
+                  <ProtectedRoute roles={['student']}>
+                    <Notifications />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/privacy-preferences"
+                element={
+                  <ProtectedRoute roles={['student']}>
+                    <PrivacyPreferences />
+                  </ProtectedRoute>
+                }
+              />
 
-            <Route path="*" element={<NotFound />} />
+              <Route path="*" element={<NotFound />} />
 
-            <Route
-              path="/help"
-              element={
-                <PlaceholderPage
-                  eyebrow="SUPPORT"
-                  title="We're here to help."
-                  description="Find guidance on using MindBridge, understanding the support process, and getting help when you need it."
-                />
-              }
-            />
+              <Route
+                path="/help"
+                element={
+                  <PlaceholderPage
+                    eyebrow="SUPPORT"
+                    title="We're here to help."
+                    description="Find guidance on using MindBridge, understanding the support process, and getting help when you need it."
+                  />
+                }
+              />
 
-            <Route
-              path="/about"
-              element={
-                <PlaceholderPage
-                  eyebrow="OUR PURPOSE"
-                  title="Support that puts students first."
-                  description="MindBridge helps coordinate student support through a privacy-conscious, human-centred approach."
-                />
-              }
-            />
+              <Route
+                path="/about"
+                element={
+                  <PlaceholderPage
+                    eyebrow="OUR PURPOSE"
+                    title="Support that puts students first."
+                    description="MindBridge helps coordinate student support through a privacy-conscious, human-centred approach."
+                  />
+                }
+              />
 
-            <Route
-              path="/accessibility"
-              element={
-                <PlaceholderPage
-                  eyebrow="ACCESSIBILITY"
-                  title="Support should be accessible to everyone."
-                  description="We're working towards a clear, inclusive, and accessible experience for every student."
-                />
-              }
-            />
+              <Route
+                path="/accessibility"
+                element={
+                  <PlaceholderPage
+                    eyebrow="ACCESSIBILITY"
+                    title="Support should be accessible to everyone."
+                    description="We're working towards a clear, inclusive, and accessible experience for every student."
+                  />
+                }
+              />
 
-            <Route
-              path="/departments"
-              element={
-                <PlaceholderPage
-                  eyebrow="STUDENT SUPPORT"
-                  title="Find the right support."
-                  description="Explore the departments and support services that will help students navigate their concerns."
-                />
-              }
-            />
-          </Routes>
-        </div>
+              <Route
+                path="/departments"
+                element={
+                  <PlaceholderPage
+                    eyebrow="STUDENT SUPPORT"
+                    title="Find the right support."
+                    description="Explore the departments and support services that will help students navigate their concerns."
+                  />
+                }
+              />
+            </Routes>
+          </div>
 
           <SiteFooter />
         </NotificationProvider>
