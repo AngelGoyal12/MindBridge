@@ -12,6 +12,18 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Literal
 
+
+import joblib
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+MODEL_PATH = BASE_DIR / "ai_service" / "models" / "multinomial_nb_model.joblib"
+VECTORIZER_PATH = BASE_DIR / "ai_service" / "models" / "tfidf_vectorizer.joblib"
+
+ai_model = joblib.load(MODEL_PATH)
+ai_vectorizer = joblib.load(VECTORIZER_PATH)
+
 from fastapi import (
     FastAPI,
     Depends,
@@ -3883,3 +3895,44 @@ def record_disclosure_decision(
     db.refresh(audit)
 
     return audit
+
+
+
+
+
+# ---------------- AI CASE CLASSIFICATION ----------------
+
+class AICategoryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=3, max_length=150)
+    description: str = Field(min_length=10, max_length=5000)
+
+    @field_validator("title", "description")
+    @classmethod
+    def trim_text(cls, value: str) -> str:
+        return value.strip()
+
+
+@app.post("/api/v1/ai/predict-category")
+def predict_case_category(
+    payload: AICategoryRequest,
+    current_user: models.User = Depends(
+        require_roles(Role.STUDENT.value)
+    ),
+    _: None = Depends(require_csrf_token),
+):
+    text = f"{payload.title} {payload.description}"
+
+    transformed_text = ai_vectorizer.transform([text])
+
+    predicted_category = ai_model.predict(transformed_text)[0]
+
+    probabilities = ai_model.predict_proba(transformed_text)
+    confidence = float(max(probabilities[0]))
+
+    return {
+        "predicted_category": str(predicted_category),
+        "confidence": round(confidence, 4),
+        "message": "AI suggestion only. Please review before submitting."
+    }

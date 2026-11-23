@@ -6,3 +6,5 @@ python-dotenv
 alembic
 pwdlib[argon2]
 email-validator
+scikit-learn
+joblib

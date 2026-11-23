@@ -1,4 +1,4 @@
-
+import { predictCaseCategory } from "../services/aiService";
 import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
@@ -72,6 +72,9 @@ export default function SubmitCase() {
     const [errors, setErrors] = useState({});
     const [submitted, setSubmitted] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [aiLoading, setAiLoading] = useState(false);
+    const [aiSuggestion, setAiSuggestion] = useState(null);
+    const [aiError, setAiError] = useState("");
 
     const selectedCategory = categories.find(
         (item) => item.value === form.category
@@ -121,6 +124,31 @@ export default function SubmitCase() {
         return Object.keys(nextErrors).length === 0;
     }
 
+
+
+async function handleAIPrediction() {
+    if (form.title.trim().length < 3 || form.description.trim().length < 10) {
+        setAiError("Please enter a title and description first.");
+        return;
+    }
+
+    setAiLoading(true);
+    setAiError("");
+    setAiSuggestion(null);
+
+    try {
+        const result = await predictCaseCategory(
+            form.title.trim(),
+            form.description.trim()
+        );
+
+        setAiSuggestion(result);
+    } catch (error) {
+        setAiError(error.message || "AI prediction failed. Please try again.");
+    } finally {
+        setAiLoading(false);
+    }
+}
 
 async function handleSubmit(event) {
     event.preventDefault();
@@ -292,6 +320,14 @@ async function handleSubmit(event) {
 
                         <div className="field-group">
                             <label htmlFor="category">What is this about? <span>*</span></label>
+                            <button
+                                    type="button"
+                                    className="secondary-button"
+                                    onClick={handleAIPrediction}
+                                    disabled={aiLoading}
+                            >
+                                    {aiLoading ? "Analysing your concern..." : "✨ Suggest category with AI"}
+                            </button>
                             <div className="select-wrap">
                                 <select
                                     id="category"
@@ -312,6 +348,48 @@ async function handleSubmit(event) {
                                 </select>
                                 <ChevronDown size={17} aria-hidden="true" />
                             </div>
+
+
+                            {aiError && (
+                                <span className="field-error">{aiError}</span>
+                            )}
+
+                            {aiSuggestion && (
+                                <div className="ai-suggestion">
+                                    <p>
+                                        <strong>AI suggested category:</strong>{" "}
+                                        {categories.find(
+                                            (item) => item.value === aiSuggestion.predicted_category
+                                        )?.label || aiSuggestion.predicted_category}
+                                    </p>
+
+                                    <p>
+                                        Model confidence score:{" "}
+                                        {(aiSuggestion.confidence * 100).toFixed(2)}%
+                                    </p>
+
+                                    <button
+                                        type="button"
+                                        className="secondary-button"
+                                        onClick={() => {
+                                            setForm((current) => ({
+                                                ...current,
+                                                category: aiSuggestion.predicted_category,
+                                            }));
+                                            setErrors((current) => ({
+                                                ...current,
+                                                category: "",
+                                            }));
+                                        }}
+                                    >
+                                        Use this suggestion
+                                    </button>
+
+                                    <small>
+                                        This is an AI suggestion. Please review the category before submitting.
+                                    </small>
+                                </div>
+                            )}
                             {errors.category && (
                                 <span className="field-error" id="category-error">
                                     {errors.category}
