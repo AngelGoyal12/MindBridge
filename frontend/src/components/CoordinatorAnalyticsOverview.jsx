@@ -121,12 +121,30 @@ export default function CoordinatorAnalyticsOverview({
       .map(([label, value]) => ({ label, value }))
       .sort((a, b) => b.value - a.value);
 
+
+    // const categoryCounts = new Map();
+
+    // cases.forEach((item) => {
+    //   const label = formatLabel(item.category);
+
+    //   categoryCounts.set(
+    //     label,
+    //     (categoryCounts.get(label) || 0) + 1
+    //   );
+    // });
+
+    // const categories = [...categoryCounts.entries()]
+    //   .map(([label, value]) => ({ label, value }))
+    //   .sort((a, b) => b.value - a.value);
+
+
     return {
       openCases,
       awaiting,
       overdue,
       openRequests,
       statuses,
+      // categories,
     };
   }, [cases, tasks, requests]);
 
@@ -211,6 +229,7 @@ export default function CoordinatorAnalyticsOverview({
       </div>
 
       <div className="admin-charts-grid">
+
         <CoordinatorBars
           title="Case progress"
           caption="Your current case status distribution"

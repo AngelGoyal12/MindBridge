@@ -276,3 +276,22 @@ export function markMessageRead(messageId) {
     { method: "PATCH" },
   );
 }
+
+
+// ---------------- AI Coordinator Insights ----------------
+
+export function getCoordinatorAIInsights() {
+  return apiRequest("/api/v1/coordinator/ai-insights");
+}
+
+
+// ---------------- AI Case Action Plan ----------------
+
+export function generateCaseAIActionPlan(caseId) {
+  return apiRequest(
+    `/api/v1/coordinator/cases/${caseId}/ai-action-plan`,
+    {
+      method: "POST",
+    }
+  );
+}

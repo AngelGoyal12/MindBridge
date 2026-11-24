@@ -118,7 +118,7 @@ class Case(Base):
         index=True,
     )
 
-    assigned_coordinator_id = Column(
+    assigned_coordinator_id = Column(   
         Integer,
         ForeignKey("users.id"),
         nullable=True,

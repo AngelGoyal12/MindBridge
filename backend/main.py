@@ -11,6 +11,10 @@ import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Literal
+from ai_service.groq_service import (
+    generate_coordinator_insights,
+    generate_case_action_plan,
+)
 
 
 import joblib
@@ -2775,6 +2779,7 @@ def get_coordinator_tasks(
     return [coordinator_task_to_dict(db, task) for task in tasks]
 
 
+
 def _apply_task_review(db: Session, task, payload, actor) -> None:
     previous = task.status
 
@@ -2808,6 +2813,140 @@ def _apply_task_review(db: Session, task, payload, actor) -> None:
         task.completion_note = None
 
     _record_task_event(db, task, actor, previous, task.status, payload.note)
+
+
+@app.get("/api/v1/coordinator/ai-insights")
+def get_coordinator_ai_insights(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_roles(Role.COORDINATOR.value)
+    ),
+):
+    try:
+        # Fetch only cases assigned to the logged-in coordinator
+        cases = (
+            db.query(models.Case)
+            .filter(
+                models.Case.assigned_coordinator_id == current_user.id
+            )
+            .all()
+        )
+
+        case_ids = [case.id for case in cases]
+
+        # Fetch tasks belonging only to these cases
+        tasks = (
+            db.query(models.DepartmentTask)
+            .filter(models.DepartmentTask.case_id.in_(case_ids))
+            .all()
+            if case_ids
+            else []
+        )
+
+        # Aggregate case statistics
+        case_status_distribution = {}
+        category_distribution = {}
+
+        for case in cases:
+            case_status_distribution[case.status] = (
+                case_status_distribution.get(case.status, 0) + 1
+            )
+
+            category_distribution[case.category] = (
+                category_distribution.get(case.category, 0) + 1
+            )
+
+        # Aggregate task statistics
+        task_status_distribution = {}
+        for task in tasks:
+            task_status_distribution[task.status] = (
+                task_status_distribution.get(task.status, 0) + 1
+            )
+
+        today = date.today()
+
+        overdue_tasks = sum(
+            1
+            for task in tasks
+            if task.status in TASK_OPEN_STATUSES
+            and task.due_date is not None
+            and task.due_date < today
+        )
+
+        # Only anonymized aggregate statistics are sent to Groq
+        statistics = {
+            "total_cases": len(cases),
+            "case_status_distribution": case_status_distribution,
+            "category_distribution": category_distribution,
+            "total_tasks": len(tasks),
+            "task_status_distribution": task_status_distribution,
+            "overdue_tasks": overdue_tasks,
+        }
+
+        insights = generate_coordinator_insights(statistics)
+
+        return {
+            "statistics": statistics,
+            "insights": insights,
+        }
+
+    except Exception:
+        logger.exception("Failed to generate coordinator AI insights")
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to generate AI insights right now. Please try again later.",
+        )
+
+
+
+@app.post("/api/v1/coordinator/cases/{case_id}/ai-action-plan")
+def create_case_ai_action_plan(
+    case_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_roles(Role.COORDINATOR.value)
+    ),
+):
+    try:
+        # Fetch only the case assigned to the logged-in coordinator
+        case = (
+            db.query(models.Case)
+            .filter(
+                models.Case.id == case_id,
+                models.Case.assigned_coordinator_id == current_user.id,
+            )
+            .first()
+        )
+
+        if not case:
+            raise HTTPException(
+                status_code=404,
+                detail="Case not found or you are not authorized to access it.",
+            )
+
+        # Send only anonymized metadata to Groq
+        case_metadata = {
+            "category": case.category,
+            "status": case.status,
+        }
+
+        action_plan = generate_case_action_plan(case_metadata)
+
+        return {
+            "case_id": case.id,
+            "action_plan": action_plan,
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        logger.exception("Failed to generate AI case action plan")
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to generate an AI action plan right now. Please try again later.",
+        )
+
 
 
 @app.patch("/api/v1/coordinator/tasks/{task_id}")

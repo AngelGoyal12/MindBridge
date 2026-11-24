@@ -1,5 +1,6 @@
-
+import CoordinatorAIInsights from "../components/CoordinatorAIInsights";
 import { useEffect, useState } from "react";
+import CoordinatorCaseActionPlan from "../components/CoordinatorCaseActionPlan";
 
 import CaseTaskManager from "../components/CaseTaskManager";
 import DepartmentTaskDashboard from "../components/DepartmentTaskDashboard";
@@ -26,6 +27,7 @@ import {
 } from "../services/caseService";
 import AdminAnalyticsOverview from "../components/AdminAnalyticsOverview";
 import CoordinatorAnalyticsOverview from "../components/CoordinatorAnalyticsOverview";
+
 
 const statusOptions = ["in_review", "in_progress", "closed"];
 
@@ -831,6 +833,12 @@ function CaseRows({
               </div>
             )}
 
+
+            {/* AI CASE ACTION PLAN */}
+            {role === "coordinator" && (
+              <CoordinatorCaseActionPlan caseItem={caseItem} />
+            )}
+
             {/* TASK MANAGEMENT */}
             {(role === "coordinator" || role === "admin") &&
               onTaskSaved && (
@@ -1367,14 +1375,17 @@ export default function RoleDashboard() {
                 tasks={tasks}
               />
             )}
+              {role === "coordinator" && (
+                <>
+                  <CoordinatorAnalyticsOverview
+                    cases={cases}
+                    tasks={tasks}
+                    requests={actionRequests}
+                  />
 
-            {role === "coordinator" && (
-              <CoordinatorAnalyticsOverview
-                cases={cases}
-                tasks={tasks}
-                requests={actionRequests}
-              />
-            )}
+                  <CoordinatorAIInsights />
+                </>
+              )}
 
             {role === "department_staff" && (
               <DepartmentTaskDashboard
