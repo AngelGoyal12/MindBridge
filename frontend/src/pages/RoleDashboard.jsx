@@ -1,5 +1,5 @@
 import CoordinatorAIInsights from "../components/CoordinatorAIInsights";
-import { useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import CoordinatorCaseActionPlan from "../components/CoordinatorCaseActionPlan";
 
 import CaseTaskManager from "../components/CaseTaskManager";
@@ -76,9 +76,15 @@ function CaseRows({
     );
   }, [cases]);
 
-  const selectedCase =
-    cases.find((item) => item.id === selectedCaseId) || cases[0];
+  const selectedCase = useMemo(
+  () => cases.find((item) => item.id === selectedCaseId) || cases[0],
+  [cases, selectedCaseId]
+);
 
+const selectedCaseTasks = useMemo(
+  () => tasks.filter((task) => task.case_id === selectedCase?.id),
+  [tasks, selectedCase?.id]
+);
   const caseItem = selectedCase;
 
   async function saveCoordinator(caseItem) {
@@ -845,9 +851,7 @@ function CaseRows({
                 <CaseTaskManager
                   caseItem={caseItem}
                   departments={departments}
-                  tasks={tasks.filter(
-                    (task) => task.case_id === caseItem.id
-                  )}
+                  tasks={selectedCaseTasks}
                   onTaskSaved={onTaskSaved}
                   onFeedback={setMessage}
                   asAdmin={role === "admin"}
@@ -999,12 +1003,20 @@ function CaseRows({
   );
 }
 
+const MemoizedCaseRows = memo(CaseRows);
+
 function CoordinatorActionRequests({
   requests,
   cases,
   onDecision,
   loadingById,
 }) {
+
+  const caseById = useMemo(
+  () => new Map(cases.map((item) => [item.id, item])),
+  [cases]
+);
+
   if (!requests.length) {
     return <p>No department updates or action requests.</p>;
   }
@@ -1012,9 +1024,7 @@ function CoordinatorActionRequests({
   return (
     <div className="role-case-list">
       {requests.map((request) => {
-        const relatedCase = cases.find(
-          (item) => item.id === request.case_id
-        );
+        const relatedCase = caseById.get(request.case_id);
 
         return (
           <article
@@ -1209,27 +1219,25 @@ export default function RoleDashboard() {
     };
   }, [role, reloadKey]);
 
-  function updateCase(updatedCase) {
-    setCases((current) =>
-      current.map((item) =>
-        item.id === updatedCase.id
-          ? { ...item, ...updatedCase }
-          : item
-      )
-    );
-  }
+  const updateCase = useCallback((updatedCase) => {
+  setCases((current) =>
+    current.map((item) =>
+      item.id === updatedCase.id
+        ? { ...item, ...updatedCase }
+        : item
+    )
+  );
+}, []);
 
-  function saveTask(savedTask) {
-    setTasks((current) =>
-      current.some((item) => item.id === savedTask.id)
-        ? current.map((item) =>
-            item.id === savedTask.id
-              ? savedTask
-              : item
-          )
-        : [savedTask, ...current]
-    );
-  }
+  const saveTask = useCallback((savedTask) => {
+  setTasks((current) =>
+    current.some((item) => item.id === savedTask.id)
+      ? current.map((item) =>
+          item.id === savedTask.id ? savedTask : item
+        )
+      : [savedTask, ...current]
+  );
+}, []);
 
   async function decideActionRequest(requestId, status) {
     if (requestLoading[requestId]) return;
@@ -1411,7 +1419,7 @@ export default function RoleDashboard() {
                 : "Case management"}
             </h2>
 
-            <CaseRows
+            <MemoizedCaseRows
               cases={cases}
               departments={departments}
               role={role}

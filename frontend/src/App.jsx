@@ -1,6 +1,6 @@
-import Login from "./pages/Login.jsx";
-import Register from "./pages/Register";
-import { useEffect, useRef, useState } from 'react';
+// import Login from "./pages/Login.jsx";
+// import Register from "./pages/Register";
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import {
   BrowserRouter,
   NavLink,
@@ -21,22 +21,35 @@ import {
 } from 'lucide-react';
 
 import './App.css';
-import SubmitCase from './pages/SubmitCase.jsx';
-import MyCases from './pages/MyCases.jsx';
-import CaseDetails from './pages/CaseDetails.jsx';
-import Notifications from './pages/Notifications.jsx';
-import PrivacyPreferences from './pages/PrivacyPreferences.jsx';
+// import SubmitCase from './pages/SubmitCase.jsx';
+// import MyCases from './pages/MyCases.jsx';
+// import CaseDetails from './pages/CaseDetails.jsx';
+// import Notifications from './pages/Notifications.jsx';
+// import PrivacyPreferences from './pages/PrivacyPreferences.jsx';
 import { AuthProvider } from './context/AuthContext.jsx';
 import { useAuth } from './context/authContext.js';
 import { NotificationProvider } from './context/NotificationContext.jsx';
 import { useNotifications } from './context/notificationContext.js';
-import RoleDashboard from './pages/RoleDashboard.jsx';
+// import RoleDashboard from './pages/RoleDashboard.jsx';
 import PlaceholderPage from './components/PlaceholderPage.jsx';
-import Profile from './pages/Profile.jsx';
-import VerifyEmail from './pages/VerifyEmail.jsx';
-import DepartmentPortal from './pages/DepartmentPortal.jsx';
-import CoordinatorInvitation from './pages/CoordinatorInvitation.jsx';
+// import Profile from './pages/Profile.jsx';
+// import VerifyEmail from './pages/VerifyEmail.jsx';
+// import DepartmentPortal from './pages/DepartmentPortal.jsx';
+// import CoordinatorInvitation from './pages/CoordinatorInvitation.jsx';
 import { caseStatusLabel, normalizeCaseStatus, roleLabel } from './services/casePresentation.js';
+
+const Login = lazy(() => import("./pages/Login.jsx"));
+const Register = lazy(() => import("./pages/Register.jsx"));
+const SubmitCase = lazy(() => import("./pages/SubmitCase.jsx"));
+const MyCases = lazy(() => import("./pages/MyCases.jsx"));
+const CaseDetails = lazy(() => import("./pages/CaseDetails.jsx"));
+const Notifications = lazy(() => import("./pages/Notifications.jsx"));
+const PrivacyPreferences = lazy(() => import("./pages/PrivacyPreferences.jsx"));
+const RoleDashboard = lazy(() => import("./pages/RoleDashboard.jsx"));
+const Profile = lazy(() => import("./pages/Profile.jsx"));
+const VerifyEmail = lazy(() => import("./pages/VerifyEmail.jsx"));
+const DepartmentPortal = lazy(() => import("./pages/DepartmentPortal.jsx"));
+const CoordinatorInvitation = lazy(() => import("./pages/CoordinatorInvitation.jsx"));
 
 const DASHBOARD_PATHS = {
   student: '/dashboard/student',
